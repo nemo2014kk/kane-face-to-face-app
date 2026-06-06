@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- 指向我们刚才设置的纯白底色 -->
+    <background android:drawable="@color/ic_launcher_background" />
+    <!-- 指向刚刚生成的最新的蓝色主体图标 -->
+    <foreground android:drawable="@mipmap/ic_launcher_foreground" />
+    <monochrome android:drawable="@mipmap/ic_launcher_foreground" />
+</adaptive-icon>

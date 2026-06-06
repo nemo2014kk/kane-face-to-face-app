@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- 我们专门开辟一个叫 kane_vision_cache 的文件夹来存放拍照原图，随时准备阅后即焚 -->
+    <cache-path name="vision_cache" path="kane_vision_cache/" />
+</paths>
