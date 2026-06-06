@@ -12,11 +12,11 @@
 - **🛡️ 幻听防火墙**：内置底噪过滤算法，自动屏蔽 AI 偶尔产生的“幻觉字幕”，100% 净化对话流。
 <img width="1246" height="857" alt="屏幕截图 2026-06-06 222554" src="https://github.com/user-attachments/assets/970bdb80-12f1-4278-a881-ecb02011efed" />
 
-###> **🌐 支持的 30 种语言列表 (30 Supported Languages)**
+> **🌐 支持的 30 种语言列表 (30 Supported Languages)**
 本款 App 内置多模态 AI 引擎，支持全球 30 种主流语种的双向语音识别、文本翻译、OCR 提取与语音高保真播报：
 
 > **🌏 亚洲地区 (11 种)**
-- ** 中文 (Chinese / Mandarin)
+\n中文 (Chinese / Mandarin)
 粤语 (Cantonese)
 日语 (Japanese)
 韩语 (Korean)
