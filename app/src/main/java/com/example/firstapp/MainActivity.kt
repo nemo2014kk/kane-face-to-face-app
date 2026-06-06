@@ -884,8 +884,12 @@ class MainActivity : AppCompatActivity() {
         val currentTtsUrl = sharedPrefs.getString("tts_server_url", "") ?: ""
         val etTtsUrl = addInput("https://...", currentTtsUrl, customContainer)
 
-        // --- 模块 C：共享的暗号区域 ---
-        addTitle("🔑 暗号 (Hugging Face秘密，找KANE获取)", null, ttsNodeCard, "#BBBBBB")
+        addTitle(
+            "🔑 暗号 (Hugging Face 密钥，点我发邮件联系 KANE 获取)",
+            "mailto:huizhen2018qz@gmail.com?subject=KANE%20Face-to-Face%20暗号申请【请表明身份】",
+            ttsNodeCard,
+            "#BBBBBB"
+        )
         val currentTtsToken = sharedPrefs.getString("tts_token", "") ?: ""
         val etTtsToken = addInput("输入暗号...", currentTtsToken, ttsNodeCard)
 
