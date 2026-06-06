@@ -16,7 +16,7 @@
 本款 App 内置多模态 AI 引擎，支持全球 30 种主流语种的双向语音识别、文本翻译、OCR 提取与语音高保真播报：
 
 > **🌏 亚洲地区 (11 种)**
-中文 (Chinese / Mandarin)
+- ** 中文 (Chinese / Mandarin)
 粤语 (Cantonese)
 日语 (Japanese)
 韩语 (Korean)
