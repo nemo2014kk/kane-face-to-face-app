@@ -3,7 +3,7 @@ name: Build Android APK
 on:
   push:
     tags:
-      - 'v*' # 当你发布以 v 开头的版本（如 v3.0.2）时，触发自动打包
+      - 'v*' # 当你发布以 v 开头的版本（如 v4.0.1）时，触发自动打包
 
 permissions:
   contents: write
@@ -18,24 +18,24 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up JDK 17 # 安装 Java 17 环境来编译你的安卓项目
+      - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: 'zulu'
-          cache: gradle # 开启缓存，让以后打包速度提升一倍
+          cache: gradle
 
       - name: Grant execute permission for gradlew
-        run: chmod +x gradlew # 赋予打包脚本执行权限
+        run: chmod +x gradlew
 
-      # 1. 编译正式版的 unsigned（未签名）APK
+      # 🌟 核心修改 1：将 assembleDebug 改为 assembleRelease，生成正式版(无签名) APK
       - name: Build Release APK
         run: ./gradlew assembleRelease 
 
-      # 2. 核心：读取你的 GitHub Secrets，给生成的 APK 自动打上正式签名
-      - name: Sign APK
-        uses: r0adkll/sign-android-release@v1
+      # 🌟 核心修改 2：调用你刚才在 GitHub 填写的 4 个密码，给 APK 盖上你的专属防伪印章！
+      - name: Sign Release APK
         id: sign_app
+        uses: r0adkll/sign-android-release@v1
         with:
           releaseDirectory: app/build/outputs/apk/release
           signingKeyBase64: ${{ secrets.KEYSTORE_BASE64 }}
@@ -43,20 +43,19 @@ jobs:
           keyStorePassword: ${{ secrets.KEYSTORE_PASSWORD }}
           keyPassword: ${{ secrets.KEY_PASSWORD }}
 
-      # 3. 将签好名的 APK 重新命名为 KANE_Face_to_Face_版本号.apk
+      # 🌟 核心修改 3：提取云端签好名的 APK，并重命名为酷炫的名字
       - name: Rename APK File
-        run: mv ${{steps.sign_app.outputs.signedReleaseFile}} app/build/outputs/apk/release/KANE_Face_to_Face_${{ github.ref_name }}.apk
+        run: mv "${{steps.sign_app.outputs.signedReleaseFile}}" "KANE_Face_to_Face_${{ github.ref_name }}.apk"
       
-      # 4. 生成安全平台审核必需的数字证书
-      - name: Attest build provenance
+      - name: Attest build provenance (安全平台审核必需的数字证书)
         uses: actions/attest-build-provenance@v2
         with:
-          subject-path: 'app/build/outputs/apk/release/*.apk'
+          subject-path: 'KANE_Face_to_Face_${{ github.ref_name }}.apk'
 
-      # 5. 自动把生成的正式签名 APK 挂载到 Releases 页面
+      # 🌟 核心修改 4：将最终签好名的正式版 APK 挂载到 Releases 页面
       - name: Create Release and Upload APK
         uses: softprops/action-gh-release@v2
         with:
-          files: app/build/outputs/apk/release/*.apk 
+          files: KANE_Face_to_Face_${{ github.ref_name }}.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
