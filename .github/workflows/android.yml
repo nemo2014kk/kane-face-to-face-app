@@ -3,7 +3,7 @@ name: Build Android APK
 on:
   push:
     tags:
-      - 'v*' # 当你发布以 v 开头的版本（如 v4.0.1）时，触发自动打包
+      - 'v*' # 当你发布以 v 开头的版本时，触发自动打包
 
 permissions:
   contents: write
@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-latest # 使用 Linux 虚拟电脑编译，速度极快
+    runs-on: ubuntu-latest # 使用 Linux 虚拟电脑编译
 
     steps:
       - name: Checkout repository
@@ -28,32 +28,37 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
-      # 🌟 核心修改 1：将 assembleDebug 改为 assembleRelease，生成正式版(无签名) APK
       - name: Build Release APK
         run: ./gradlew assembleRelease 
 
-      # 🌟 核心修改 2：调用你刚才在 GitHub 填写的 4 个密码，给 APK 盖上你的专属防伪印章！
-      - name: Sign Release APK
-        id: sign_app
-        uses: r0adkll/sign-android-release@v1
-        with:
-          releaseDirectory: app/build/outputs/apk/release
-          signingKeyBase64: ${{ secrets.KEYSTORE_BASE64 }}
-          alias: ${{ secrets.KEY_ALIAS }}
-          keyStorePassword: ${{ secrets.KEYSTORE_PASSWORD }}
-          keyPassword: ${{ secrets.KEY_PASSWORD }}
-          buildToolsVersion: 34.0.0  # 👈 就是新增了这一行，告诉它用新版工具！
+      # 🌟 终极方案：抛弃年久失修的第三方插件，直接调用谷歌原生命令行进行极速签名！
+      - name: Sign APK (Native)
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          # 1. 从 GitHub 保险箱中将 Base64 还原成真实的秘钥文件
+          echo $KEYSTORE_BASE64 | base64 --decode > my-release-key.jks
+          
+          # 2. 找到刚才编译出来的那颗无签名 APK
+          APK_PATH=$(find app/build/outputs/apk/release -name "*.apk" | head -n 1)
+          
+          # 3. 自动定位云端系统里【最新】的安卓编译工具 (彻底杜绝版本找不到的问题)
+          BUILD_TOOLS_DIR=$(ls -d $ANDROID_HOME/build-tools/* | tail -1)
+          
+          # 4. 执行内存对齐优化（zipalign），让 App 运行更流畅
+          $BUILD_TOOLS_DIR/zipalign -v -p 4 $APK_PATH app-release-aligned.apk
+          
+          # 5. 拿出刚才还原的秘钥，正式盖上你的专属数字印章（apksigner）
+          $BUILD_TOOLS_DIR/apksigner sign --ks my-release-key.jks --ks-pass pass:$KEYSTORE_PASSWORD --key-pass pass:$KEY_PASSWORD --ks-key-alias $KEY_ALIAS --out KANE_Face_to_Face_${{ github.ref_name }}.apk app-release-aligned.apk
 
-      # 🌟 核心修改 3：提取云端签好名的 APK，并重命名为酷炫的名字
-      - name: Rename APK File
-        run: mv "${{steps.sign_app.outputs.signedReleaseFile}}" "KANE_Face_to_Face_${{ github.ref_name }}.apk"
-      
-      - name: Attest build provenance (安全平台审核必需的数字证书)
+      - name: Attest build provenance
         uses: actions/attest-build-provenance@v2
         with:
           subject-path: 'KANE_Face_to_Face_${{ github.ref_name }}.apk'
 
-      # 🌟 核心修改 4：将最终签好名的正式版 APK 挂载到 Releases 页面
       - name: Create Release and Upload APK
         uses: softprops/action-gh-release@v2
         with:
