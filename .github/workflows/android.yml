@@ -30,7 +30,7 @@ jobs:
 
       - name: Build Debug APK
         run: ./gradlew assembleDebug 
-        # 💡 小白知识：这里打包的是 Debug 版 APK。它自带安卓默认签名，发给任何人都能直接安装测试！
+        # 💡 这里打包的是 Debug 版 APK。它自带安卓默认签名，发给任何人都能直接安装测试！
 
       - name: Rename APK File
         run: mv app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/debug/KANE_Face_to_Face_${{ github.ref_name }}.apk
