@@ -3,7 +3,7 @@ name: Build Android APK
 on:
   push:
     tags:
-      - 'v*' # 当你发布以 v 开头的版本（如 v2.5.0）时，触发自动打包
+      - 'v*' # 当你发布以 v 开头的版本（如 v3.0.2）时，触发自动打包
 
 permissions:
   contents: write
@@ -28,21 +28,35 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew # 赋予打包脚本执行权限
 
-      - name: Build Debug APK
-        run: ./gradlew assembleDebug 
-        # 💡 这里打包的是 Debug 版 APK。它自带安卓默认签名，发给任何人都能直接安装测试！
+      # 1. 编译正式版的 unsigned（未签名）APK
+      - name: Build Release APK
+        run: ./gradlew assembleRelease 
 
+      # 2. 核心：读取你的 GitHub Secrets，给生成的 APK 自动打上正式签名
+      - name: Sign APK
+        uses: r0adkll/sign-android-release@v1
+        id: sign_app
+        with:
+          releaseDirectory: app/build/outputs/apk/release
+          signingKeyBase64: ${{ secrets.KEYSTORE_BASE64 }}
+          alias: ${{ secrets.KEY_ALIAS }}
+          keyStorePassword: ${{ secrets.KEYSTORE_PASSWORD }}
+          keyPassword: ${{ secrets.KEY_PASSWORD }}
+
+      # 3. 将签好名的 APK 重新命名为 KANE_Face_to_Face_版本号.apk
       - name: Rename APK File
-        run: mv app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/debug/KANE_Face_to_Face_${{ github.ref_name }}.apk
+        run: mv ${{steps.sign_app.outputs.signedReleaseFile}} app/build/outputs/apk/release/KANE_Face_to_Face_${{ github.ref_name }}.apk
       
-      - name: Attest build provenance (安全平台审核必需的数字证书)
+      # 4. 生成安全平台审核必需的数字证书
+      - name: Attest build provenance
         uses: actions/attest-build-provenance@v2
         with:
-          subject-path: 'app/build/outputs/apk/debug/*.apk'
+          subject-path: 'app/build/outputs/apk/release/*.apk'
 
+      # 5. 自动把生成的正式签名 APK 挂载到 Releases 页面
       - name: Create Release and Upload APK
         uses: softprops/action-gh-release@v2
         with:
-          files: app/build/outputs/apk/debug/*.apk # 自动把生成的 apk 挂载到 Releases 页面
+          files: app/build/outputs/apk/release/*.apk 
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
