@@ -5,7 +5,7 @@ plugins {
 android {
     namespace = "com.example.firstapp"
     compileSdk {
-        version = release(36) {
+        version = release(34) {
             minorApiLevel = 1
         }
     }
@@ -13,9 +13,9 @@ android {
     defaultConfig {
         applicationId = "com.example.firstapp"
         minSdk = 28
-        targetSdk = 36
-        versionCode = 3
-        versionName = "3.1.0"// 使用标准版本号格式
+        targetSdk = 34
+        versionCode = 4
+        versionName = "4.0.0"// 使用标准版本号格式
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
