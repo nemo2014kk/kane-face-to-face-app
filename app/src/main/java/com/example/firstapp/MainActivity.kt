@@ -2058,7 +2058,7 @@ class MainActivity : AppCompatActivity() {
     // =================================================================================
     private fun fetchTtsNodesSilently(onResult: ((Int, String) -> Unit)? = null) {
         val gitClient = okhttp3.OkHttpClient.Builder().connectTimeout(8, java.util.concurrent.TimeUnit.SECONDS).build()
-        val urlGit = "https://cdn.jsdelivr.net/gh/nemo2014kk/Kane-firstAPP-Config@main/tts_nodes.json"
+        val urlGit = "https://cdn.jsdelivr.net/gh/nemo2014kk/Kane-firstAPP-Config@main/tts_nodes3.json"
         // 🌟 新增：Hugging Face 官方 Raw 数据兜底直链
         val urlHf = "https://huggingface.co/datasets/KANE-202666/face-to-face-Config/resolve/main/tts_nodes.json"
 
