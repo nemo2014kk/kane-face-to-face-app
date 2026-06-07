@@ -42,6 +42,7 @@ jobs:
           alias: ${{ secrets.KEY_ALIAS }}
           keyStorePassword: ${{ secrets.KEYSTORE_PASSWORD }}
           keyPassword: ${{ secrets.KEY_PASSWORD }}
+          buildToolsVersion: 34.0.0  # 👈 就是新增了这一行，告诉它用新版工具！
 
       # 🌟 核心修改 3：提取云端签好名的 APK，并重命名为酷炫的名字
       - name: Rename APK File
