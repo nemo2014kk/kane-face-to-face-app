@@ -1054,7 +1054,7 @@ class MainActivity : AppCompatActivity() {
 
         // 署名留白区
         val tvFooter = TextView(context).apply {
-            text = "Designed & Developed by KANE\nVer 2.0 Pro"
+            text = "Designed & Developed by KANE\nVer v3.0.3 Pro"
             setTextColor(Color.parseColor("#666666"))
             textSize = 12f
             gravity = android.view.Gravity.CENTER
