@@ -950,7 +950,7 @@ class MainActivity : AppCompatActivity() {
         scroll.addView(layout)
 
         val settingsDialog = AlertDialog.Builder(this)
-            .setCustomTitle(createCyberTitle("KANE Face-to-Face v4 设置面板"))
+            .setCustomTitle(createCyberTitle("KANE Face-to-Face v5 设置面板"))
             .setView(scroll)
             .setPositiveButton("保存") { _, _ ->
                 val editor = sharedPrefs.edit()
@@ -1054,7 +1054,7 @@ class MainActivity : AppCompatActivity() {
 
         // 署名留白区
         val tvFooter = TextView(context).apply {
-            text = "Designed & Developed by KANE\nVer v4.0.4 Pro"
+            text = "Designed & Developed by KANE\nVer v5.0.1 Pro"
             setTextColor(Color.parseColor("#666666"))
             textSize = 12f
             gravity = android.view.Gravity.CENTER

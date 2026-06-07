@@ -14,8 +14,8 @@ android {
         applicationId = "com.example.firstapp"
         minSdk = 28
         targetSdk = 36
-        versionCode = 4
-        versionName = "4.0.4"// 使用标准版本号格式
+        versionCode = 5
+        versionName = "5.0.1"// 使用标准版本号格式
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
