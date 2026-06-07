@@ -2071,7 +2071,7 @@ class MainActivity : AppCompatActivity() {
                 // ----------------------------------------------------
                 val remoteVersion = jsonObj.optString("version", "")
                 val notice = jsonObj.optString("notice", "")
-                val encryptedUrl = jsonObj.optString("google_drive_encrypted", "")
+                val encryptedUrl = jsonObj.optString("download_url", "") // 👈 将字段名改成 download_url
 
                 if (remoteVersion.isNotEmpty() && encryptedUrl.isNotEmpty()) {
                     val currentVersion = packageManager.getPackageInfo(packageName, 0).versionName ?: "1.0"
