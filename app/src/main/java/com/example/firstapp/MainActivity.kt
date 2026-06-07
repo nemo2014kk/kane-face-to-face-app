@@ -950,7 +950,7 @@ class MainActivity : AppCompatActivity() {
         scroll.addView(layout)
 
         val settingsDialog = AlertDialog.Builder(this)
-            .setCustomTitle(createCyberTitle("KANE Face-to-Face v2.5 pro 设置面板"))
+            .setCustomTitle(createCyberTitle("KANE Face-to-Face v3 设置面板"))
             .setView(scroll)
             .setPositiveButton("保存") { _, _ ->
                 val editor = sharedPrefs.edit()
