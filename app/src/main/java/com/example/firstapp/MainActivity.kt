@@ -1026,15 +1026,15 @@ class MainActivity : AppCompatActivity() {
 
         addSection("⚙️ 设置面板：AI 引擎配置", """
             <b>• 双向联动绑定：</b>在顶部的语种与音色列表中，切换任意一项，系统会自动推导并匹配另一项，无需繁琐设置。<br>
-            <b>• Groq 主力引擎：</b>提供极速推理。需自行前往官网申请 API Key。点击「拉取最新模型」可实时更新云端可用模型 (默认推荐 Qwen 系列)。<br>
+            <b>• Groq 主力引擎：</b>提供极速推理。需自行前往官网申请 API Key。点击「拉取最新模型」可实时更新云端可用模型 (默认推荐 Qwen 系列/70B等)。<br>
             <b>• Gemini 备用/视觉引擎：</b>当主力网络阻断时，系统将静默无缝切换至 Gemini 兜底；此外，所有的图片翻译均由 Gemini 引擎独立完成。同样需自备 API Key。
         """.trimIndent(), "#FFA500")
 
         addSection("🌐 设置面板：云端 TTS 配置", """
-            <b>• 语音开关：</b>可自由勾选是否开启「自动语音播报 (TTS)」。<br>
-            <b>• 节点拉取机制：</b>采用微软高保真发音。当发音失效时，点击<b>「一键获取最新可用线路」</b>，系统会优先从 Google Drive 极速拉取最新节点；若超时将自动降级至 GitHub 备用通道。<br>
-            <b>• 自定义 URL 与暗号：</b>支持手动填入私人部署的 TTS 节点地址。<b>「专属访问暗号 (Token)」</b>用于验证身份，防止私人云端节点被非法盗刷接口额度。
-        """.trimIndent(), "#00BCFF")
+    <b>• 语音开关：</b>可自由勾选是否开启「自动语音播报 (TTS)」。<br>
+    <b>• 节点拉取机制：</b>采用微软高保真发音。当发音失效时，点击<b>「一键获取最新可用线路」</b>，系统会优先从 GitHub CDN 极速拉取最新集群列表；若遭遇网络阻断，将静默降级至 Hugging Face 备用通道获取。<br>
+    <b>• 自定义 URL 与暗号：</b>支持手动填入私人部署的 TTS 节点地址。<b>「专属访问暗号 (Token)」</b>用于验证身份，防止私人云端节点被非法盗刷接口额度。
+""".trimIndent(), "#00BCFF")
 
         addSection("🛡️ 设置面板：幻听防火墙", """
             <b>• 触发原理：</b>在极端安静环境下，AI 偶会将底噪强行解析为“字幕”、“谢谢观看”等无意义的“幻觉词汇”。<br>
@@ -1054,7 +1054,7 @@ class MainActivity : AppCompatActivity() {
 
         // 署名留白区
         val tvFooter = TextView(context).apply {
-            text = "Designed & Developed by KANE\nVer v5.0.1 Pro"
+            text = "Designed & Developed by KANE\nVer v5.0.2 Pro"
             setTextColor(Color.parseColor("#666666"))
             textSize = 12f
             gravity = android.view.Gravity.CENTER
@@ -1161,6 +1161,58 @@ class MainActivity : AppCompatActivity() {
                 }
             }
 
+            val density = context.resources.displayMetrics.density
+            val btnSize = (45 * density).toInt()
+
+            // 🌟 新增：为右侧的两个按钮创建一个垂直的专属容器
+            val btnContainer = LinearLayout(context).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = android.view.Gravity.BOTTOM
+                layoutTransition = android.animation.LayoutTransition() // 开启容器内动画，小喇叭出现会非常优雅
+                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+                    bottomMargin = (8 * density).toInt()
+                    marginStart = (12 * density).toInt()
+                }
+            }
+
+            // 🌟 新增：独立的小喇叭按钮
+            val speakerBtn = TextView(context).apply {
+                text = "🔊"
+                textSize = 20f
+                gravity = android.view.Gravity.CENTER
+                visibility = View.GONE // 初始坚决隐藏
+                layoutParams = LinearLayout.LayoutParams(btnSize, btnSize).apply {
+                    bottomMargin = (12 * density).toInt() // 和下方的火箭拉开 12dp 的距离
+                }
+                background = GradientDrawable().apply {
+                    shape = GradientDrawable.OVAL
+                    setColor(Color.parseColor("#252526"))
+                    setStroke((2 * density).toInt(), Color.parseColor(activeColor))
+                }
+            }
+
+            val sendBtn = TextView(context).apply {
+                text = "🚀"
+                textSize = 20f
+                gravity = android.view.Gravity.CENTER
+                // 移除了原本的 margin，统一由外层的 btnContainer 管理
+                layoutParams = LinearLayout.LayoutParams(btnSize, btnSize)
+                background = GradientDrawable().apply {
+                    shape = GradientDrawable.OVAL
+                    setColor(Color.parseColor("#252526"))
+                    setStroke((2 * density).toInt(), Color.parseColor(activeColor))
+                }
+            }
+
+            // 🌟 核心逻辑 1：动态智能隐显控制器 (根据“有无焦点”和“有无内容”判定)
+            fun updateSpeakerState(hasFocus: Boolean, currentText: String) {
+                if (hasFocus || currentText.isNotEmpty()) {
+                    speakerBtn.visibility = View.VISIBLE
+                } else {
+                    speakerBtn.visibility = View.GONE
+                }
+            }
+
             et.setOnFocusChangeListener { _, hasFocus ->
                 val color = if (hasFocus) activeColor else "#444444"
                 val width = if (hasFocus) 5 else 2
@@ -1174,43 +1226,86 @@ class MainActivity : AppCompatActivity() {
                 } else {
                     et.minLines = 1
                 }
+                // 🌟 焦点变化时校验喇叭状态
+                updateSpeakerState(hasFocus, et.text.toString().trim())
             }
 
-            val density = context.resources.displayMetrics.density
-            val btnSize = (45 * density).toInt()
-
-            val sendBtn = TextView(context).apply {
-                text = "🚀"
-                textSize = 20f
-                gravity = android.view.Gravity.CENTER
-                layoutParams = LinearLayout.LayoutParams(btnSize, btnSize).apply {
-                    bottomMargin = (8 * density).toInt()
-                    marginStart = (12 * density).toInt()
+            // 🌟 监听文字输入，一旦用户清空文字并收起键盘，立即隐藏喇叭
+            et.addTextChangedListener(object : android.text.TextWatcher {
+                override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                    updateSpeakerState(et.hasFocus(), s.toString().trim())
                 }
-                background = GradientDrawable().apply {
-                    shape = GradientDrawable.OVAL
-                    setColor(Color.parseColor("#252526"))
-                    setStroke((2 * density).toInt(), Color.parseColor(activeColor))
-                }
+                override fun afterTextChanged(s: android.text.Editable?) {}
+            })
 
-                setOnClickListener {
-                    val input = et.text.toString().trim()
-                    if (input.isNotEmpty()) {
-                        triggerVibration(50)
+            // 🌟 核心逻辑 2：朗读动作与 UI 反馈闭环
+            speakerBtn.setOnClickListener {
+                val input = et.text.toString().trim()
+                if (input.isEmpty()) return@setOnClickListener // 无字直接忽略
 
-                        // 🌟 修复：发送文本前，执行航天级强制收回软键盘指令，杜绝幽灵键盘残留
-                        try {
-                            val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
-                            imm.hideSoftInputFromWindow(et.windowToken, 0)
-                        } catch (e: Exception) {}
+                triggerVibration(40)
+                if (edgeTts.isSpeaking) {
+                    // 如果正在播放，点击即强行停止
+                    edgeTts.stop()
+                    speakerBtn.text = "🔊"
+                    (speakerBtn.background as GradientDrawable).setColor(Color.parseColor("#252526"))
+                    (speakerBtn.background as GradientDrawable).setStroke((2 * density).toInt(), Color.parseColor(activeColor))
+                } else {
+                    // 如果不在播放，则智能查阅专属发音色并呼叫微软
+                    val voiceName = if (isTop) ptVoiceName else myVoiceName
+                    val voiceId = AppConstants.TTS_VOICES[voiceName] ?: "zh-CN-XiaoxiaoNeural"
 
-                        dialog?.dismiss()
-                        processTextPipeline(input, isTop)
-                    }
+                    edgeTts.speak(input, voiceId,
+                        onNodeSelected = { _ ->
+                            runOnUiThread {
+                                speakerBtn.text = "⏳" // 连接状态
+                                (speakerBtn.background as GradientDrawable).setColor(Color.parseColor("#121212"))
+                            }
+                        },
+                        onStart = {
+                            runOnUiThread {
+                                speakerBtn.text = "⏹️" // 播放状态 (变红，随时可断)
+                                (speakerBtn.background as GradientDrawable).setColor(Color.parseColor("#331111"))
+                                (speakerBtn.background as GradientDrawable).setStroke((2 * density).toInt(), Color.parseColor("#FF4444"))
+                            }
+                        },
+                        onDone = {
+                            runOnUiThread {
+                                speakerBtn.text = "🔊" // 恢复原状
+                                (speakerBtn.background as GradientDrawable).setColor(Color.parseColor("#252526"))
+                                (speakerBtn.background as GradientDrawable).setStroke((2 * density).toInt(), Color.parseColor(activeColor))
+                            }
+                        }
+                    )
                 }
             }
+
+            sendBtn.setOnClickListener {
+                val input = et.text.toString().trim()
+                if (input.isNotEmpty()) {
+                    triggerVibration(50)
+
+                    // 🌟 只要点了发送，不管三七二十一，先让可能正在发音的喇叭闭嘴
+                    edgeTts.stop()
+
+                    try {
+                        val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
+                        imm.hideSoftInputFromWindow(et.windowToken, 0)
+                    } catch (e: Exception) {}
+
+                    dialog?.dismiss()
+                    processTextPipeline(input, isTop)
+                }
+            }
+
+            // 组装垂直按钮栈
+            btnContainer.addView(speakerBtn)
+            btnContainer.addView(sendBtn)
+
+            // 组装水平输入行
             inputRow.addView(et)
-            inputRow.addView(sendBtn)
+            inputRow.addView(btnContainer) // 🌟 挂载整个垂直列
             moduleLayout.addView(inputRow)
 
             return moduleLayout
@@ -1225,6 +1320,10 @@ class MainActivity : AppCompatActivity() {
 
         dialog.window?.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(Color.TRANSPARENT))
         dialog.window?.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+
+        // 🌟 终极防线：只要对话框因为任何原因消失了（点旁边、按返回键），立刻停掉TTS，杜绝退到主界面还听见幽灵朗读
+        dialog.setOnDismissListener { edgeTts.stop() }
+
         if (!isFinishing && !isDestroyed) dialog.show()
     }
 
