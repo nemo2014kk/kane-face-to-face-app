@@ -1025,7 +1025,6 @@ class MainActivity : AppCompatActivity() {
         """.trimIndent(), "#00BCFF")
 
         addSection("⚙️ 设置面板：AI 引擎配置", """
-            <b>• 双向联动绑定：</b>在顶部的语种与音色列表中，切换任意一项，系统会自动推导并匹配另一项，无需繁琐设置。<br>
             <b>• Groq 主力引擎：</b>提供极速推理。需自行前往官网申请 API Key。点击「拉取最新模型」可实时更新云端可用模型 (默认推荐 Qwen 系列/70B等)。<br>
             <b>• Gemini 备用/视觉引擎：</b>当主力网络阻断时，系统将静默无缝切换至 Gemini 兜底；此外，所有的图片翻译均由 Gemini 引擎独立完成。同样需自备 API Key。
         """.trimIndent(), "#FFA500")
