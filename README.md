@@ -1,3 +1,14 @@
+<!-- 基础信息行 -->
+![Release](https://img.shields.io/badge/release-v5.0.2-green.svg)
+![Platform](https://img.shields.io/badge/Platform-Android_9.0%2B_%28API_28%2B%29-3DDC84.svg?logo=android&logoColor=white)
+![Language](https://img.shields.io/badge/Language-Kotlin-7F52FF.svg?logo=kotlin&logoColor=white)
+![License](https://img.shields.io/badge/License-MIT-blue.svg)
+
+<!-- 硬核技术栈行 -->
+![ASR](https://img.shields.io/badge/ASR-Groq_Whisper_v3-orange.svg)
+![AI Engine](https://img.shields.io/badge/AI_Engine-Gemini_3.1_%26_Qwen-blueviolet.svg)
+![TTS Engine](https://img.shields.io/badge/TTS-Microsoft_Edge_Cluster-0078D4.svg)
+
 # 🎙️ KANE Face-to-Face APP
 
 > **面对面聊天翻译，支持语音说话、拍照识别和 AI 自动翻译【手机 APP】。**
