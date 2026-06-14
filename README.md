@@ -13,8 +13,8 @@
 
 <img width="1261" height="865" alt="屏幕截图 2026-06-06 222554" src="https://github.com/user-attachments/assets/cb97d9c4-eb4f-40f4-9d39-88f13c03eb67" />
 
-### 🌐 支持的 30 种语言列表 (30 Supported Languages)
-本款 App 内置多模态 AI 引擎，支持全球 30 种主流语种的双向语音识别、文本翻译、OCR 提取与语音高保真播报：
+### 🌐 支持的 31 种语言列表 (30 Supported Languages)
+本款 App 内置多模态 AI 引擎，支持全球 31 种主流语种的双向语音识别、文本翻译、OCR 提取翻译与语音高保真播报：
 
 #### 🌏 亚洲地区 (11 种)
 - 中文 (Chinese / Mandarin)
