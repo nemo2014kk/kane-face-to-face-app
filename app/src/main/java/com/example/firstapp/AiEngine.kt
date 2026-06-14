@@ -135,7 +135,9 @@ class AiEngine {
             "es" to "Esta es una grabación de voz en español. Por favor, transcriba con precisión y puntuación correcta.",
             "ru" to "Это голосовая запись на русском языке. Пожалуйста, сделайте точную транскрипцию с правильной пунктуацией.",
             "it" to "Questa è una registrazione vocale in italiano. Si prega di trascrivere con precisione e corretta punteggiatura.",
-            "pt" to "Esta é uma gravação de voz em português. Por favor, transcreva com precisão e pontuação correta."
+            "pt" to "Esta é uma gravação de voz em português. Por favor, transcreva com precisão e pontuação correta.",
+            // 👇 下面这行是新加的塞尔维亚语，注意上一行的末尾现在有一个逗号了
+            "sr" to "Ово је гласовни снимак на српском језику. Молим вас, тачно транскрибујте са правилном интерпункцијом."
         )
 
         val whisperPrompt = promptMap[language] ?: ""
