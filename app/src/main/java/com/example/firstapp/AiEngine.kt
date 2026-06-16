@@ -136,16 +136,20 @@ class AiEngine {
             "ru" to "Это голосовая запись на русском языке. Пожалуйста, сделайте точную транскрипцию с правильной пунктуацией.",
             "it" to "Questa è una registrazione vocale in italiano. Si prega di trascrivere con precisione e corretta punteggiatura.",
             "pt" to "Esta é uma gravação de voz em português. Por favor, transcreva com precisão e pontuação correta.",
-            // 👇 下面这行是新加的塞尔维亚语，注意上一行的末尾现在有一个逗号了
-            "sr" to "Ово је гласовни снимак на српском језику. Молим вас, тачно транскрибујте са правилном интерпункцијом."
+            // 👇 拦截伪代码，赋予极其精准的不同文字系统的提示词
+            "sr-latn" to "Ovo je glasovni snimak na srpskom jeziku. Molim vas, tačno transkribujte sa pravilnom interpunkcijom koristeći latinično pismo.",
+            "sr-cyrl" to "Ово је гласовни снимак на српском језику. Молим вас, тачно транскрибујте са правилном интерпункцијом користећи ћирилично писмо."
         )
 
         val whisperPrompt = promptMap[language] ?: ""
 
+        // 🌟 核心拦截：将内部伪代码 (sr-latn / sr-cyrl) 还原为标准 "sr" 发送给 Whisper API，避免报 400 错误
+        val apiLangCode = if (language.startsWith("sr-")) "sr" else language
+
         val builder = MultipartBody.Builder()
             .setType(MultipartBody.FORM)
             .addFormDataPart("model", "whisper-large-v3-turbo")
-            .addFormDataPart("language", language)
+            .addFormDataPart("language", apiLangCode) // 👈 使用处理过的 apiLangCode
             .addFormDataPart("file", "audio.wav", wavBytes.toRequestBody("audio/wav".toMediaType()))
 
         if (whisperPrompt.isNotEmpty()) {

@@ -338,16 +338,18 @@ class MainActivity : AppCompatActivity() {
 
         val onDoubleTapTop = { msg: ChatMessage -> showFullscreenDisplay(msg.translatedText, msg.originalText, msg.voiceId, "#00BCFF", true) }
         val onDoubleTapBottom = { msg: ChatMessage -> showFullscreenDisplay(msg.translatedText, msg.originalText, msg.voiceId, "#00E676", false) }
-
+        val onEditClickAction = { msg: ChatMessage -> showEditDialog(msg) } // 👈 声明编辑直达动作
         topAdapter = ChatAdapter(
             onMessageLongClick = onLongClickAction,
             onMessageDoubleTap = onDoubleTapTop,
-            onPlayClick = onPlayClickAction
+            onPlayClick = onPlayClickAction,
+            onEditClick = onEditClickAction // 👈 传入动作
         )
         bottomAdapter = ChatAdapter(
             onMessageLongClick = onLongClickAction,
             onMessageDoubleTap = onDoubleTapBottom,
-            onPlayClick = onPlayClickAction
+            onPlayClick = onPlayClickAction,
+            onEditClick = onEditClickAction // 👈 传入动作
         )
 
         rvTopChat.layoutManager = LinearLayoutManager(this).apply { stackFromEnd = true }
@@ -1053,7 +1055,7 @@ class MainActivity : AppCompatActivity() {
 
         // 署名留白区
         val tvFooter = TextView(context).apply {
-            text = "Designed & Developed by KANE\nVer v5.0.3 Pro"
+            text = "Designed & Developed by KANE\nVer v5.1.1 Pro"
             setTextColor(Color.parseColor("#666666"))
             textSize = 12f
             gravity = android.view.Gravity.CENTER
@@ -1130,10 +1132,10 @@ class MainActivity : AppCompatActivity() {
             }
             moduleLayout.addView(title)
 
+            // 🌟 注意：这里移除了原本的 gravity 靠底，让右侧按钮柱能自适应撑满高度
             val inputRow = LinearLayout(context).apply {
                 orientation = LinearLayout.HORIZONTAL
                 layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-                gravity = android.view.Gravity.BOTTOM
                 isBaselineAligned = false
                 layoutTransition = android.animation.LayoutTransition()
                 clipChildren = false
@@ -1162,27 +1164,67 @@ class MainActivity : AppCompatActivity() {
 
             val density = context.resources.displayMetrics.density
             val btnSize = (45 * density).toInt()
+            val smallBtnSize = (38 * density).toInt() // 🌟 为笔记本按钮专门调教的精巧尺寸
 
-            // 🌟 新增：为右侧的两个按钮创建一个垂直的专属容器
+            // 🌟 核心重构：将右侧按钮容器高度设为 MATCH_PARENT，使其与左侧多行输入框高度始终一致
             val btnContainer = LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
-                gravity = android.view.Gravity.BOTTOM
-                layoutTransition = android.animation.LayoutTransition() // 开启容器内动画，小喇叭出现会非常优雅
-                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
-                    bottomMargin = (8 * density).toInt()
+                layoutTransition = android.animation.LayoutTransition()
+                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.MATCH_PARENT).apply {
                     marginStart = (12 * density).toInt()
                 }
             }
 
-            // 🌟 新增：独立的小喇叭按钮
+            // 🌟 上方按钮组 (➕ 与 📑)
+            val topBtnGroup = LinearLayout(context).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = android.view.Gravity.CENTER_HORIZONTAL
+            }
+
+            val btnSave = TextView(context).apply {
+                text = "➕"
+                textSize = 18f
+                gravity = android.view.Gravity.CENTER
+                layoutParams = LinearLayout.LayoutParams(smallBtnSize, smallBtnSize).apply { bottomMargin = (10 * density).toInt() }
+                background = GradientDrawable().apply {
+                    shape = GradientDrawable.OVAL
+                    setColor(Color.parseColor("#1A1A1B"))
+                    setStroke((1.5f * density).toInt(), Color.parseColor("#555555"))
+                }
+            }
+
+            val btnNotebook = TextView(context).apply {
+                text = "📑"
+                textSize = 18f
+                gravity = android.view.Gravity.CENTER
+                layoutParams = LinearLayout.LayoutParams(smallBtnSize, smallBtnSize)
+                background = GradientDrawable().apply {
+                    shape = GradientDrawable.OVAL
+                    setColor(Color.parseColor("#1A1A1B"))
+                    setStroke((1.5f * density).toInt(), Color.parseColor("#555555"))
+                }
+            }
+            topBtnGroup.addView(btnSave)
+            topBtnGroup.addView(btnNotebook)
+
+            // 🌟 弹性弹簧：负责把上下两组按钮向两端无情推开
+            val spacer = android.widget.Space(context).apply {
+                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
+            }
+
+            // 🌟 下方按钮组 (🔊 与 🚀)
+            val bottomBtnGroup = LinearLayout(context).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = android.view.Gravity.CENTER_HORIZONTAL
+                layoutTransition = android.animation.LayoutTransition()
+            }
+
             val speakerBtn = TextView(context).apply {
                 text = "🔊"
                 textSize = 20f
                 gravity = android.view.Gravity.CENTER
-                visibility = View.GONE // 初始坚决隐藏
-                layoutParams = LinearLayout.LayoutParams(btnSize, btnSize).apply {
-                    bottomMargin = (12 * density).toInt() // 和下方的火箭拉开 12dp 的距离
-                }
+                visibility = View.GONE
+                layoutParams = LinearLayout.LayoutParams(btnSize, btnSize).apply { bottomMargin = (12 * density).toInt() }
                 background = GradientDrawable().apply {
                     shape = GradientDrawable.OVAL
                     setColor(Color.parseColor("#252526"))
@@ -1194,7 +1236,6 @@ class MainActivity : AppCompatActivity() {
                 text = "🚀"
                 textSize = 20f
                 gravity = android.view.Gravity.CENTER
-                // 移除了原本的 margin，统一由外层的 btnContainer 管理
                 layoutParams = LinearLayout.LayoutParams(btnSize, btnSize)
                 background = GradientDrawable().apply {
                     shape = GradientDrawable.OVAL
@@ -1202,8 +1243,56 @@ class MainActivity : AppCompatActivity() {
                     setStroke((2 * density).toInt(), Color.parseColor(activeColor))
                 }
             }
+            bottomBtnGroup.addView(speakerBtn)
+            bottomBtnGroup.addView(sendBtn)
 
-            // 🌟 核心逻辑 1：动态智能隐显控制器 (根据“有无焦点”和“有无内容”判定)
+            // ==========================================
+            // 💡 交互逻辑 A：一键收藏进笔记本
+            // ==========================================
+            btnSave.setOnClickListener {
+                val content = et.text.toString().trim()
+                if (content.isEmpty()) {
+                    triggerVibration(20)
+                    Toast.makeText(context, "⚠️ 请先输入文字", Toast.LENGTH_SHORT).show()
+                    return@setOnClickListener
+                }
+
+                // 机械感缩放反馈动画
+                it.animate().scaleX(0.8f).scaleY(0.8f).setDuration(100).withEndAction {
+                    it.animate().scaleX(1f).scaleY(1f).setDuration(100).start()
+                }.start()
+
+                // 智能截取标题 (去除换行，限8字)
+                val rawTitle = content.replace("\n", " ").take(8)
+                val title = if (content.length > 8) "$rawTitle..." else rawTitle
+
+                val array = getNotebookData()
+                val newObj = org.json.JSONObject().apply {
+                    put("id", java.util.UUID.randomUUID().toString())
+                    put("title", title)
+                    put("content", content)
+                }
+
+                // 将最新加入的置于最前面 (倒序)
+                val newArray = org.json.JSONArray()
+                newArray.put(newObj)
+                for (i in 0 until array.length()) newArray.put(array.getJSONObject(i))
+
+                sharedPrefs.edit().putString("kane_notebook_data", newArray.toString()).apply()
+
+                triggerVibration(40)
+                Toast.makeText(context, "✅ 已存入笔记本", Toast.LENGTH_SHORT).show()
+            }
+
+            // ==========================================
+            // 💡 交互逻辑 B：展开笔记本子弹窗
+            // ==========================================
+            btnNotebook.setOnClickListener {
+                triggerVibration(30)
+                showNotebookSubDialog(et) // 传入当前的输入框，以便绝对覆盖
+            }
+
+            // 🌟 动态智能隐显控制器
             fun updateSpeakerState(hasFocus: Boolean, currentText: String) {
                 if (hasFocus || currentText.isNotEmpty()) {
                     speakerBtn.visibility = View.VISIBLE
@@ -1220,16 +1309,10 @@ class MainActivity : AppCompatActivity() {
                     setStroke(width, Color.parseColor(color))
                     cornerRadius = 20f
                 }
-                if (hasFocus) {
-                    et.minLines = 18
-                } else {
-                    et.minLines = 1
-                }
-                // 🌟 焦点变化时校验喇叭状态
+                et.minLines = if (hasFocus) 18 else 1
                 updateSpeakerState(hasFocus, et.text.toString().trim())
             }
 
-            // 🌟 监听文字输入，一旦用户清空文字并收起键盘，立即隐藏喇叭
             et.addTextChangedListener(object : android.text.TextWatcher {
                 override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
                 override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
@@ -1238,40 +1321,38 @@ class MainActivity : AppCompatActivity() {
                 override fun afterTextChanged(s: android.text.Editable?) {}
             })
 
-            // 🌟 核心逻辑 2：朗读动作与 UI 反馈闭环
             speakerBtn.setOnClickListener {
                 val input = et.text.toString().trim()
-                if (input.isEmpty()) return@setOnClickListener // 无字直接忽略
+                if (input.isEmpty()) return@setOnClickListener
 
                 triggerVibration(40)
                 if (edgeTts.isSpeaking) {
-                    // 如果正在播放，点击即强行停止
                     edgeTts.stop()
                     speakerBtn.text = "🔊"
                     (speakerBtn.background as GradientDrawable).setColor(Color.parseColor("#252526"))
                     (speakerBtn.background as GradientDrawable).setStroke((2 * density).toInt(), Color.parseColor(activeColor))
                 } else {
-                    // 如果不在播放，则智能查阅专属发音色并呼叫微软
                     val voiceName = if (isTop) ptVoiceName else myVoiceName
-                    val voiceId = AppConstants.TTS_VOICES[voiceName] ?: "zh-CN-XiaoxiaoNeural"
+                    val targetLangName = if (isTop) ptLangName else myLangName
+                    val voiceId = getSmartVoiceId(voiceName, targetLangName) // 🌟 使用智能路由获取真实发音ID
 
                     edgeTts.speak(input, voiceId,
                         onNodeSelected = { _ ->
                             runOnUiThread {
-                                speakerBtn.text = "⏳" // 连接状态
+                                speakerBtn.text = "⏳"
                                 (speakerBtn.background as GradientDrawable).setColor(Color.parseColor("#121212"))
                             }
                         },
                         onStart = {
                             runOnUiThread {
-                                speakerBtn.text = "⏹️" // 播放状态 (变红，随时可断)
+                                speakerBtn.text = "⏹️"
                                 (speakerBtn.background as GradientDrawable).setColor(Color.parseColor("#331111"))
                                 (speakerBtn.background as GradientDrawable).setStroke((2 * density).toInt(), Color.parseColor("#FF4444"))
                             }
                         },
                         onDone = {
                             runOnUiThread {
-                                speakerBtn.text = "🔊" // 恢复原状
+                                speakerBtn.text = "🔊"
                                 (speakerBtn.background as GradientDrawable).setColor(Color.parseColor("#252526"))
                                 (speakerBtn.background as GradientDrawable).setStroke((2 * density).toInt(), Color.parseColor(activeColor))
                             }
@@ -1284,34 +1365,30 @@ class MainActivity : AppCompatActivity() {
                 val input = et.text.toString().trim()
                 if (input.isNotEmpty()) {
                     triggerVibration(50)
-
-                    // 🌟 只要点了发送，不管三七二十一，先让可能正在发音的喇叭闭嘴
                     edgeTts.stop()
-
                     try {
                         val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
                         imm.hideSoftInputFromWindow(et.windowToken, 0)
                     } catch (e: Exception) {}
-
                     dialog?.dismiss()
                     processTextPipeline(input, isTop)
                 }
             }
 
-            // 组装垂直按钮栈
-            btnContainer.addView(speakerBtn)
-            btnContainer.addView(sendBtn)
+            // 组装整个垂直列
+            btnContainer.addView(topBtnGroup)
+            btnContainer.addView(spacer)
+            btnContainer.addView(bottomBtnGroup)
 
-            // 组装水平输入行
             inputRow.addView(et)
-            inputRow.addView(btnContainer) // 🌟 挂载整个垂直列
+            inputRow.addView(btnContainer)
             moduleLayout.addView(inputRow)
 
             return moduleLayout
         }
 
-        layout.addView(createInputModule("✍️ 对方文字输入 [ ${ptLangName} ]", isTop = true, activeColor = "#00BCFF"))
-        layout.addView(createInputModule("✍️ 我方文字输入[ ${myLangName} ]", isTop = false, activeColor = "#00E676"))
+        layout.addView(createInputModule("✍️ 对方文字输入【 ${ptLangName} 】", isTop = true, activeColor = "#00BCFF"))
+        layout.addView(createInputModule("✍️ 我方文字输入【 ${myLangName} 】", isTop = false, activeColor = "#00E676"))
 
         dialog = AlertDialog.Builder(this)
             .setView(layout)
@@ -1552,14 +1629,16 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showBubbleOptionsDialog(msg: ChatMessage) {
-        val options = arrayOf("📋 复制译文", "📄 复制原文", "🎯 标记为幻听拉黑")
+        // 🌟 核心调整：编辑上移，拉黑下放到底部
+        val options = arrayOf("📋 复制译文", "📄 复制原文", "✏️ 编辑并重译", "🎯 标记为幻听拉黑")
 
         val optionsDialog = AlertDialog.Builder(this)
             .setItems(options) { _, which ->
                 when (which) {
                     0 -> copyToClipboard("译文", msg.translatedText)
                     1 -> copyToClipboard("原文", msg.originalText)
-                    2 -> showKillerDialog(msg.originalText)
+                    2 -> showEditDialog(msg)         // 👈 改为 2
+                    3 -> showKillerDialog(msg.originalText) // 👈 改为 3
                 }
             }
             .create()
@@ -1674,7 +1753,7 @@ class MainActivity : AppCompatActivity() {
                     setTextColor(Color.WHITE)
                     (background as GradientDrawable).setColor(Color.parseColor("#00AA00"))
                 } else {
-                    val voiceId = AppConstants.TTS_VOICES[myVoiceName] ?: "zh-CN-XiaoxiaoNeural"
+                    val voiceId = getSmartVoiceId(myVoiceName, myLangName) // 🌟 使用智能路由获取真实发音ID
                     edgeTts.speak(translatedText, voiceId,
                         onNodeSelected = { nodeName ->
                             runOnUiThread {
@@ -1776,7 +1855,7 @@ class MainActivity : AppCompatActivity() {
         val llmTargetEn = AppConstants.LANG_MAP_EN[targetLangName] ?: "English"
 
         val voiceName = if (isTop) myVoiceName else ptVoiceName
-        val voiceId = AppConstants.TTS_VOICES[voiceName] ?: "en-US-AvaNeural"
+        val voiceId = getSmartVoiceId(voiceName, targetLangName) // 🌟 使用智能路由获取真实发音ID
 
         val transMsg = if (isTop) "⏳ Translating..." else "⏳ 正在翻译..."
         setIslandState(transMsg, "#FFFF00", isTop = isTop)
@@ -1799,8 +1878,10 @@ class MainActivity : AppCompatActivity() {
                     return@translateText
                 }
 
-                topAdapter.addMessage(ChatMessage(translated, text, isMe = isTop, voiceId = voiceId))
-                bottomAdapter.addMessage(ChatMessage(translated, text, isMe = !isTop, voiceId = voiceId))
+                // 🌟 核心联动：给上下同源的气泡打上相同 ID 和发言人标签
+                val msgId = java.util.UUID.randomUUID().toString()
+                topAdapter.addMessage(ChatMessage(translated, text, isMe = isTop, voiceId = voiceId, isTopSpeaker = isTop, id = msgId))
+                bottomAdapter.addMessage(ChatMessage(translated, text, isMe = !isTop, voiceId = voiceId, isTopSpeaker = isTop, id = msgId))
 
                 rvTopChat.post {
                     val topScroller = object : androidx.recyclerview.widget.LinearSmoothScroller(this@MainActivity) {
@@ -2370,5 +2451,294 @@ class MainActivity : AppCompatActivity() {
             .create()
 
         dialog.show()
+    }
+    private fun showEditDialog(msg: ChatMessage) {
+        val context = this
+        val layout = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(60, 40, 60, 40)
+            setBackgroundColor(Color.parseColor("#1A1A1B"))
+        }
+
+        val hintText = TextView(context).apply {
+            text = "✏️ 识别有误？请直接修改原文："
+            setTextColor(Color.parseColor("#BBBBBB"))
+            textSize = 14f
+            setPadding(0, 0, 0, 20)
+        }
+
+        val etKeyword = EditText(context).apply {
+            setText(msg.originalText)
+            setTextColor(Color.WHITE)
+            textSize = 16f
+            setPadding(30, 30, 30, 30)
+            background = GradientDrawable().apply {
+                setColor(Color.parseColor("#0F0F0F"))
+                setStroke(2, Color.parseColor("#00BCFF"))
+                cornerRadius = 15f
+            }
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE
+            minLines = 4
+            maxLines = 18
+        }
+
+        layout.addView(hintText)
+        layout.addView(etKeyword)
+
+        val editDialog = AlertDialog.Builder(this)
+            .setCustomTitle(createCyberTitle("📝 编辑原文"))
+            .setView(layout)
+            .setPositiveButton("重新翻译") { _, _ ->
+                val newText = etKeyword.text.toString().trim()
+                if (newText.isNotEmpty() && newText != msg.originalText) {
+                    retranslateMessage(msg, newText)
+                } else if (newText == msg.originalText) {
+                    Toast.makeText(context, "未做任何修改", Toast.LENGTH_SHORT).show()
+                }
+            }
+            .setNegativeButton("取消", null)
+            .create()
+
+        if (!isFinishing && !isDestroyed) editDialog.show()
+    }
+
+    private fun retranslateMessage(oldMsg: ChatMessage, newOriginalText: String) {
+        // 1. 根据溯源标签，精准判断这句话当初是谁说的，防止由于当前选项卡被切换导致语种错乱
+        val isTop = oldMsg.isTopSpeaker
+        val sourceLangName = if (isTop) ptLangName else myLangName
+        val targetLangName = if (isTop) myLangName else ptLangName
+
+        val llmSourceEn = AppConstants.LANG_MAP_EN[sourceLangName] ?: "English"
+        val llmTargetEn = AppConstants.LANG_MAP_EN[targetLangName] ?: "English"
+
+        setIslandState("⏳ 正在重译修正...", "#FFFF00")
+
+        aiEngine.translateText(newOriginalText, llmSourceEn, llmTargetEn,
+            onFallback = {
+                runOnUiThread { setIslandState("⚠️ 切换备用引擎重译...", "#FFA500") }
+            }
+        ) { llmSuccess, translated, engineName ->
+            if (isDestroyed || isFinishing) return@translateText
+
+            if (llmSuccess && translated.isNotBlank()) {
+                // 2. 🌟 双轨联动：拿着统一的 ID，同时强制刷新上下屏幕的气泡数据！
+                topAdapter.updateMessageById(oldMsg.id, translated, newOriginalText)
+                bottomAdapter.updateMessageById(oldMsg.id, translated, newOriginalText)
+
+                setIslandState("✅ 修正完毕 ($engineName)", "#00FF00")
+                resetIslandDelayed()
+
+                // 3. 自动触发语音修正播报体验
+                if (isTtsEnabled && !oldMsg.voiceId.startsWith("hy-AM")) {
+                    edgeTts.speak(translated, oldMsg.voiceId,
+                        onNodeSelected = { nodeName -> runOnUiThread { setIslandState("🎵 准备发音 [$nodeName]", "#00BCFF", animatePop = false) } },
+                        onStart = {
+                            setIslandState("🔊   修正播报中   ⏹️ ", "#00FF00", isTop = false)
+                            tvDynamicIsland.isClickable = true
+                            tvDynamicIsland.setOnClickListener {
+                                triggerVibration(50)
+                                edgeTts.stop()
+                                resetIsland()
+                            }
+                        },
+                        onDone = { resetIsland() }
+                    )
+                }
+            } else {
+                setIslandState("❌ 修改重译失败", "#FF4444")
+                resetIslandDelayed(3000L)
+            }
+        }
+    }
+    // ==========================================
+    // 🧠 核心外脑数据与子弹窗处理器
+    // ==========================================
+    private fun getNotebookData(): org.json.JSONArray {
+        val jsonStr = sharedPrefs.getString("kane_notebook_data", "[]") ?: "[]"
+        return try { org.json.JSONArray(jsonStr) } catch (e: Exception) { org.json.JSONArray() }
+    }
+
+    private fun showNotebookSubDialog(targetEditText: EditText) {
+        val context = this
+        val layout = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(50, 40, 50, 40)
+            setBackgroundColor(Color.parseColor("#1A1A1B"))
+        }
+
+        val tvTitle = TextView(context).apply {
+            text = "📑 快捷笔记本"
+            setTextColor(Color.parseColor("#00BCFF"))
+            textSize = 16f
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            setPadding(0, 0, 0, 30)
+        }
+        layout.addView(tvTitle)
+
+        val listContainer = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
+
+        val scroll = ScrollView(context).apply {
+            val density = resources.displayMetrics.density
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, (350 * density).toInt())
+            addView(listContainer)
+        }
+        layout.addView(scroll)
+
+        var dialog: androidx.appcompat.app.AlertDialog? = null
+
+        fun renderList() {
+            listContainer.removeAllViews()
+            val array = getNotebookData()
+
+            if (array.length() == 0) {
+                val tvEmpty = TextView(context).apply {
+                    text = "📭 笔记本空空如也\n在聊天框输入文字后，点击 ➕ 即可收藏"
+                    setTextColor(Color.parseColor("#555555"))
+                    textSize = 14f
+                    gravity = android.view.Gravity.CENTER
+                    setLineSpacing(10f, 1.2f)
+                    setPadding(0, 100, 0, 100)
+                }
+                listContainer.addView(tvEmpty)
+                return
+            }
+
+            for (i in 0 until array.length()) {
+                val item = array.getJSONObject(i)
+                val id = item.optString("id")
+                val title = item.optString("title")
+                val content = item.optString("content")
+
+                val row = LinearLayout(context).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setPadding(35, 25, 35, 25)
+                    background = GradientDrawable().apply {
+                        setColor(Color.parseColor("#252526"))
+                        cornerRadius = 15f
+                    }
+                    layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+                        bottomMargin = 20
+                    }
+
+                    // 💡 交互逻辑 C：绝对覆盖填入
+                    setOnClickListener {
+                        triggerVibration(30)
+                        targetEditText.setText(content)
+                        targetEditText.setSelection(targetEditText.text.length)
+                        dialog?.dismiss()
+                    }
+
+                    // 💡 交互逻辑 D：长按呼出选项菜单
+                    setOnLongClickListener {
+                        triggerVibration(50)
+                        val options = arrayOf("📋 复制内容", "✏️ 修改标题", "❌ 删除条目")
+                        androidx.appcompat.app.AlertDialog.Builder(context)
+                            .setItems(options) { _, which ->
+                                when (which) {
+                                    0 -> copyToClipboard("笔记", content)
+                                    1 -> showEditNotebookTitleDialog(id, title) { renderList() }
+                                    2 -> {
+                                        deleteNotebookEntry(id)
+                                        renderList()
+                                        triggerVibration(30)
+                                    }
+                                }
+                            }
+                            .show()
+                        true
+                    }
+                }
+
+                val tvItemTitle = TextView(context).apply {
+                    text = title
+                    setTextColor(Color.parseColor("#00E676"))
+                    textSize = 15f
+                    setTypeface(null, android.graphics.Typeface.BOLD)
+                    setPadding(0, 0, 0, 8)
+                }
+
+                val tvItemContent = TextView(context).apply {
+                    text = content
+                    setTextColor(Color.parseColor("#AAAAAA"))
+                    textSize = 13f
+                    maxLines = 1
+                    ellipsize = android.text.TextUtils.TruncateAt.END // 单行超长截断处理
+                }
+
+                row.addView(tvItemTitle)
+                row.addView(tvItemContent)
+                listContainer.addView(row)
+            }
+        }
+
+        renderList()
+
+        dialog = androidx.appcompat.app.AlertDialog.Builder(this)
+            .setView(layout)
+            .create()
+
+        dialog.window?.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(Color.TRANSPARENT))
+        if (!isFinishing && !isDestroyed) dialog.show()
+    }
+
+    private fun deleteNotebookEntry(targetId: String) {
+        val array = getNotebookData()
+        val newArray = org.json.JSONArray()
+        for (i in 0 until array.length()) {
+            val item = array.getJSONObject(i)
+            if (item.optString("id") != targetId) newArray.put(item)
+        }
+        sharedPrefs.edit().putString("kane_notebook_data", newArray.toString()).apply()
+    }
+
+    private fun showEditNotebookTitleDialog(targetId: String, oldTitle: String, onUpdated: () -> Unit) {
+        val context = this
+        val layout = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(60, 40, 60, 40)
+            setBackgroundColor(Color.parseColor("#1A1A1B"))
+        }
+
+        val etNewTitle = EditText(context).apply {
+            setText(oldTitle)
+            setTextColor(Color.WHITE)
+            textSize = 16f
+            setPadding(30, 30, 30, 30)
+            background = GradientDrawable().apply {
+                setColor(Color.parseColor("#0F0F0F"))
+                setStroke(2, Color.parseColor("#00BCFF"))
+                cornerRadius = 15f
+            }
+            setSelection(text.length)
+        }
+        layout.addView(etNewTitle)
+
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setCustomTitle(createCyberTitle("✏️ 给语料起个新名字"))
+            .setView(layout)
+            .setPositiveButton("保存更改") { _, _ ->
+                val newTitle = etNewTitle.text.toString().trim()
+                if (newTitle.isNotEmpty()) {
+                    val array = getNotebookData()
+                    for (i in 0 until array.length()) {
+                        val item = array.getJSONObject(i)
+                        if (item.optString("id") == targetId) {
+                            item.put("title", newTitle)
+                            break
+                        }
+                    }
+                    sharedPrefs.edit().putString("kane_notebook_data", array.toString()).apply()
+                    onUpdated() // 自动刷新列表渲染
+                }
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+    // ==========================================
+    // 🧠 塞尔维亚语 (拉丁) 专属发音拦截路由 (已修正)
+    // ==========================================
+    private fun getSmartVoiceId(voiceName: String, langName: String): String {
+        // 废弃之前的身份证掉包逻辑，直接返回原始西里尔 ID，彻底消灭 500 崩溃
+        return AppConstants.TTS_VOICES[voiceName] ?: "zh-CN-XiaoxiaoNeural"
     }
 }

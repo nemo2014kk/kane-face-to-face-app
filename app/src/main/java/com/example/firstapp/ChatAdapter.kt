@@ -4,17 +4,20 @@ import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.view.Gravity
 import android.view.ViewGroup
+import android.view.View   // 👈 手动加上这行
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
 
-data class ChatMessage(val translatedText: String, val originalText: String, val isMe: Boolean, val voiceId: String)
+// 🌟 核心升级：引入发言人溯源机制 (isTopSpeaker) 与气泡身份证 (id)
+data class ChatMessage(val translatedText: String, val originalText: String, val isMe: Boolean, val voiceId: String, val isTopSpeaker: Boolean = false, val id: String = java.util.UUID.randomUUID().toString())
 
 class ChatAdapter(
     private val messages: MutableList<ChatMessage> = mutableListOf(),
     private val onMessageLongClick: (ChatMessage) -> Unit,
     private val onMessageDoubleTap: (ChatMessage) -> Unit,
-    private val onPlayClick: (String, String) -> Unit
+    private val onPlayClick: (String, String) -> Unit,
+    private val onEditClick: (ChatMessage) -> Unit // 👈 新增直达编辑的回调
 ) : RecyclerView.Adapter<ChatAdapter.ChatViewHolder>() {
 
     // 🌟 核心：存储当前的全局字号状态
@@ -35,6 +38,14 @@ class ChatAdapter(
     fun clearMessages() {
         messages.clear()
         notifyDataSetChanged()
+    }
+    // 👇 新增：通过唯一 ID 瞬间定位并无痕刷新气泡 (不会导致整个列表闪烁)
+    fun updateMessageById(targetId: String, newTranslated: String, newOriginal: String) {
+        val index = messages.indexOfFirst { it.id == targetId }
+        if (index != -1) {
+            messages[index] = messages[index].copy(translatedText = newTranslated, originalText = newOriginal)
+            notifyItemChanged(index)
+        }
     }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ChatViewHolder {
@@ -60,6 +71,9 @@ class ChatAdapter(
         // 🌟 译文区 (固定在上方，取消写死的颜色和字号，改为动态下发)
         val tvTrans = TextView(context).apply {
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            // 👇 新增：适当放宽行距，并在底部加入安全留白，防止缩小时被系统意外裁剪
+            setLineSpacing(6f, 1.15f)
+            setPadding(0, 0, 0, 10)
         }
 
         val btnPlay = TextView(context).apply {
@@ -68,19 +82,39 @@ class ChatAdapter(
             setPadding(20, 0, 0, 0)
         }
 
-        // 🌟 原文区 (固定在下方，取消写死的颜色和字号)
+        // 🌟 原文区 (改造成水平布局，原文占满左侧，右侧预留给小笔，与上方喇叭完美对齐)
+        val bottomRowLayout = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                topMargin = 12 // 👇 新增：用物理间距把“原文区”稍微往下推一点，告别拥挤
+            }
+        }
+
         val tvOrig = TextView(context).apply {
-            setPadding(0, 10, 0, 0)
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            // 👇 修改：增加行距，底部同样留出安全区，保护英文 p/g/y 等下沉笔画
+            setLineSpacing(2f, 1.05f) // 👈 收紧行距：额外加2个像素，倍数降为1.05
+            setPadding(0, 10, 0, 10)
+        }
+
+        val btnEdit = TextView(context).apply {
+            text = "✏️"
+            textSize = 22f // 👈 和喇叭字号保持绝对一致
+            setPadding(20, 10, 0, 0) // 👈 间距和喇叭保持绝对一致
         }
 
         topRowLayout.addView(tvTrans)
         topRowLayout.addView(btnPlay)
 
+        bottomRowLayout.addView(tvOrig)
+        bottomRowLayout.addView(btnEdit)
+
         bubbleBox.addView(topRowLayout)
-        bubbleBox.addView(tvOrig)
+        bubbleBox.addView(bottomRowLayout) // 👈 挂载整行
         container.addView(bubbleBox)
 
-        return ChatViewHolder(container, bubbleBox, tvTrans, btnPlay, tvOrig, topRowLayout)
+        return ChatViewHolder(container, bubbleBox, tvTrans, btnPlay, tvOrig, topRowLayout, btnEdit, bottomRowLayout)
     }
 
 
@@ -130,9 +164,22 @@ class ChatAdapter(
 
         // 动态调整气泡内小喇叭的位置
         if (msg.isMe) {
-            holder.topRowLayout.gravity = Gravity.CENTER_VERTICAL // 我方保持原本居中不变
+            holder.topRowLayout.gravity = Gravity.CENTER_VERTICAL
+            holder.bottomRowLayout.gravity = Gravity.CENTER_VERTICAL // 👈 新增：原文行也居中
         } else {
-            holder.topRowLayout.gravity = Gravity.TOP // 对方全贴到右上角
+            holder.topRowLayout.gravity = Gravity.TOP
+            holder.bottomRowLayout.gravity = Gravity.TOP // 👈 新增：原文行也贴顶
+        }
+
+        // 👇 🌟 核心 UX 优化：只有属于自己的绿色气泡才显示小笔，对方的灰色气泡隐藏小笔且不占位置
+        if (msg.isMe) {
+            holder.btnEdit.visibility = View.VISIBLE
+        } else {
+            holder.btnEdit.visibility = View.GONE
+        }
+        // 👇 新增：绑定小笔图标的点击事件
+        holder.btnEdit.setOnClickListener {
+            onEditClick(msg)
         }
 
         // 绑定长按事件
@@ -164,7 +211,9 @@ class ChatAdapter(
         val tvTrans: TextView,
         val btnPlay: TextView,
         val tvOrig: TextView,
-        val topRowLayout: LinearLayout
+        val topRowLayout: LinearLayout,
+        val btnEdit: TextView,             // 👈 新增
+        val bottomRowLayout: LinearLayout  // 👈 新增
     ) : RecyclerView.ViewHolder(container) {
         // 🛡️ 修复：将双击时间戳绑定到实体 ViewHolder 上，免疫滑动复用导致的重置
         var lastClickTime: Long = 0

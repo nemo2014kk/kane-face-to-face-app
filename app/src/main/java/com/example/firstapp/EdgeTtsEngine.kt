@@ -112,10 +112,38 @@ class EdgeTtsEngine(context: Context, private val fallbackTts: TextToSpeech) {
         stop()
         isCancelledManually = false
 
+        // 🌟 塞尔维亚语 (拉丁) 智能文本转换拦截器
+        // 既然服务器没有拉丁播音员，我们就偷偷把拼音转换成西里尔字母，让她用母语读出来！
+        var processedText = text
+        if (voiceId.startsWith("sr-RS-")) {
+            val srMap = mapOf(
+                "nj" to "њ", "Nj" to "Њ", "NJ" to "Њ",
+                "lj" to "љ", "Lj" to "Љ", "LJ" to "Љ",
+                "dž" to "џ", "Dž" to "Џ", "DŽ" to "Џ",
+                "dj" to "ђ", "Dj" to "Ђ", "DJ" to "Ђ",
+                "đ" to "ђ", "Đ" to "Ђ",
+                "a" to "а", "b" to "б", "v" to "в", "g" to "г", "d" to "д",
+                "e" to "е", "ž" to "ж", "z" to "з", "i" to "и", "j" to "ј",
+                "k" to "к", "l" to "л", "m" to "м", "n" to "н", "o" to "о",
+                "p" to "п", "r" to "р", "s" to "с", "t" to "т", "ć" to "ћ",
+                "u" to "у", "f" to "ф", "h" to "х", "c" to "ц", "č" to "ч",
+                "š" to "ш",
+                "A" to "А", "B" to "Б", "V" to "В", "G" to "Г", "D" to "Д",
+                "E" to "Е", "Ž" to "Ж", "Z" to "З", "I" to "И", "J" to "Ј",
+                "K" to "К", "L" to "Л", "M" to "М", "N" to "Н", "O" to "О",
+                "P" to "П", "R" to "Р", "S" to "С", "T" to "Т", "Ć" to "Ћ",
+                "U" to "У", "F" to "Ф", "H" to "Х", "C" to "Ц", "Č" to "Ч",
+                "Š" to "Ш"
+            )
+            for ((lat, cyr) in srMap) {
+                processedText = processedText.replace(lat, cyr)
+            }
+        }
+
         // 🌟 动态判断模式并随机抽取可用节点
         val mode = sharedPrefs.getString("tts_mode", "auto") ?: "auto"
         var targetUrlStr = ""
-        var nodeLabel = "" // 用于记录当前选中了哪个节点
+        var nodeLabel = ""
 
         if (mode == "custom") {
             targetUrlStr = sharedPrefs.getString("tts_server_url", "") ?: ""
@@ -124,26 +152,21 @@ class EdgeTtsEngine(context: Context, private val fallbackTts: TextToSpeech) {
             val nodes = sharedPrefs.getStringSet("tts_cached_nodes", emptySet())?.toList() ?: emptyList()
             if (nodes.isNotEmpty()) {
                 val currentTime = System.currentTimeMillis()
-                // 🧹 智能洗牌：清理刑满释放的节点 (关押超10分钟即释放)
+                // 🧹 智能洗牌：清理刑满释放的节点
                 blacklistedNodes.entries.removeIf { currentTime - it.value > 10 * 60 * 1000 }
                 val availableNodes = nodes.filter { !blacklistedNodes.containsKey(it) }
 
-                targetUrlStr = if (availableNodes.isNotEmpty()) {
-                    availableNodes.random() // 🎲 随机负载均衡
-                } else {
-                    // 全军覆没，紧急洗牌释放所有节点
+                targetUrlStr = if (availableNodes.isNotEmpty()) availableNodes.random() else {
                     blacklistedNodes.clear()
                     nodes.random()
                 }
 
-                // 🌟 核心算法：对 URL 列表进行首字母排序，赋予固定序号，用于 UI 展示
                 val sortedNodes = nodes.sorted()
                 val nodeIndex = sortedNodes.indexOf(targetUrlStr) + 1
                 nodeLabel = "节点 $nodeIndex"
             }
         }
 
-        // 🌟 立即将选中的节点名通过回调推给主界面
         if (nodeLabel.isNotEmpty()) {
             mainHandler.post { onNodeSelected(nodeLabel) }
         }
@@ -151,18 +174,19 @@ class EdgeTtsEngine(context: Context, private val fallbackTts: TextToSpeech) {
         val currentToken = sharedPrefs.getString("tts_token", "") ?: ""
 
         if (targetUrlStr.isBlank()) {
-            fallbackPlay(text, voiceId, onStart, onDone, "未配置或未找到云端节点")
+            fallbackPlay(processedText, voiceId, onStart, onDone, "未配置或未找到云端节点")
             return
         }
 
         val urlBuilder = targetUrlStr.toHttpUrlOrNull()?.newBuilder()
         if (urlBuilder == null) {
-            fallbackPlay(text, voiceId, onStart, onDone, "网址配置错误")
+            fallbackPlay(processedText, voiceId, onStart, onDone, "网址配置错误")
             return
         }
 
+        // 🚀 注意：这里使用的是经过魔改翻译的 processedText！
         val url = urlBuilder
-            .addQueryParameter("text", text)
+            .addQueryParameter("text", processedText)
             .addQueryParameter("voice", voiceId)
             .addQueryParameter("token", currentToken)
             .build()
@@ -174,7 +198,7 @@ class EdgeTtsEngine(context: Context, private val fallbackTts: TextToSpeech) {
         val safeFallback: (String) -> Unit = { reason ->
             if (!isCancelledManually && !isFallbackTriggered) {
                 isFallbackTriggered = true
-                fallbackPlay(text, voiceId, onStart, onDone, reason)
+                fallbackPlay(processedText, voiceId, onStart, onDone, reason)
             }
         }
 
@@ -194,7 +218,6 @@ class EdgeTtsEngine(context: Context, private val fallbackTts: TextToSpeech) {
 
                 if (!response.isSuccessful || response.body == null) {
                     val code = response.code
-                    // 🌟 核心拦截：明确拒接，判死刑，关入小黑屋 10 分钟！
                     if (code == 429 || code == 404 || code == 500 || code == 503 || code == 504 || code == 403) {
                         blacklistedNodes[targetUrlStr] = System.currentTimeMillis()
                     }
