@@ -1104,7 +1104,7 @@ class MainActivity : AppCompatActivity() {
         val layout = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(60, 50, 60, 50)
-            layoutTransition = android.animation.LayoutTransition()
+            layoutTransition = android.animation.LayoutTransition() // 🌟 开启全局丝滑动画
             background = GradientDrawable().apply {
                 setColor(Color.parseColor("#1A1A1B"))
                 cornerRadius = 40f
@@ -1114,10 +1114,20 @@ class MainActivity : AppCompatActivity() {
 
         var dialog: AlertDialog? = null
 
-        fun createInputModule(titleText: String, isTop: Boolean, activeColor: String): View {
+        // 🌟 定义装载单个输入模块所有 UI 组件的数据容器，方便后续统一调度
+        class ModuleUI(
+            val root: LinearLayout,
+            val title: TextView,
+            val inputRow: LinearLayout,
+            val et: EditText,
+            val btnContainer: LinearLayout,
+            val speakerBtn: TextView
+        )
+
+        fun createInputModule(titleText: String, isTop: Boolean, activeColor: String): ModuleUI {
             val moduleLayout = LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
-                layoutTransition = android.animation.LayoutTransition()
+                layoutTransition = android.animation.LayoutTransition() // 🌟 开启丝滑折叠动画
                 layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
                     bottomMargin = 50
                 }
@@ -1132,12 +1142,11 @@ class MainActivity : AppCompatActivity() {
             }
             moduleLayout.addView(title)
 
-            // 🌟 注意：这里移除了原本的 gravity 靠底，让右侧按钮柱能自适应撑满高度
             val inputRow = LinearLayout(context).apply {
                 orientation = LinearLayout.HORIZONTAL
                 layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
                 isBaselineAligned = false
-                layoutTransition = android.animation.LayoutTransition()
+                layoutTransition = android.animation.LayoutTransition() // 🌟 开启丝滑显隐动画
                 clipChildren = false
                 clipToPadding = false
             }
@@ -1150,7 +1159,6 @@ class MainActivity : AppCompatActivity() {
                 setPadding(35, 30, 35, 30)
                 gravity = android.view.Gravity.TOP or android.view.Gravity.START
                 inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE
-                minLines = 1
                 maxLines = 18
                 layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
                     marginEnd = 25
@@ -1164,18 +1172,16 @@ class MainActivity : AppCompatActivity() {
 
             val density = context.resources.displayMetrics.density
             val btnSize = (45 * density).toInt()
-            val smallBtnSize = (38 * density).toInt() // 🌟 为笔记本按钮专门调教的精巧尺寸
+            val smallBtnSize = (38 * density).toInt()
 
-            // 🌟 核心重构：将右侧按钮容器高度设为 MATCH_PARENT，使其与左侧多行输入框高度始终一致
             val btnContainer = LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
-                layoutTransition = android.animation.LayoutTransition()
+                layoutTransition = android.animation.LayoutTransition() // 🌟 开启丝滑推拉动画
                 layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.MATCH_PARENT).apply {
                     marginStart = (12 * density).toInt()
                 }
             }
 
-            // 🌟 上方按钮组 (➕ 与 📑)
             val topBtnGroup = LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
                 gravity = android.view.Gravity.CENTER_HORIZONTAL
@@ -1207,12 +1213,10 @@ class MainActivity : AppCompatActivity() {
             topBtnGroup.addView(btnSave)
             topBtnGroup.addView(btnNotebook)
 
-            // 🌟 弹性弹簧：负责把上下两组按钮向两端无情推开
             val spacer = android.widget.Space(context).apply {
                 layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
             }
 
-            // 🌟 下方按钮组 (🔊 与 🚀)
             val bottomBtnGroup = LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
                 gravity = android.view.Gravity.CENTER_HORIZONTAL
@@ -1247,7 +1251,7 @@ class MainActivity : AppCompatActivity() {
             bottomBtnGroup.addView(sendBtn)
 
             // ==========================================
-            // 💡 交互逻辑 A：一键收藏进笔记本
+            // 💡 交互逻辑 (完全保留你原本的安全逻辑)
             // ==========================================
             btnSave.setOnClickListener {
                 val content = et.text.toString().trim()
@@ -1256,70 +1260,29 @@ class MainActivity : AppCompatActivity() {
                     Toast.makeText(context, "⚠️ 请先输入文字", Toast.LENGTH_SHORT).show()
                     return@setOnClickListener
                 }
-
-                // 机械感缩放反馈动画
                 it.animate().scaleX(0.8f).scaleY(0.8f).setDuration(100).withEndAction {
                     it.animate().scaleX(1f).scaleY(1f).setDuration(100).start()
                 }.start()
-
-                // 智能截取标题 (去除换行，限8字)
                 val rawTitle = content.replace("\n", " ").take(8)
                 val title = if (content.length > 8) "$rawTitle..." else rawTitle
-
                 val array = getNotebookData()
                 val newObj = org.json.JSONObject().apply {
                     put("id", java.util.UUID.randomUUID().toString())
                     put("title", title)
                     put("content", content)
                 }
-
-                // 将最新加入的置于最前面 (倒序)
                 val newArray = org.json.JSONArray()
                 newArray.put(newObj)
                 for (i in 0 until array.length()) newArray.put(array.getJSONObject(i))
-
                 sharedPrefs.edit().putString("kane_notebook_data", newArray.toString()).apply()
-
                 triggerVibration(40)
                 Toast.makeText(context, "✅ 已存入笔记本", Toast.LENGTH_SHORT).show()
             }
 
-            // ==========================================
-            // 💡 交互逻辑 B：展开笔记本子弹窗
-            // ==========================================
             btnNotebook.setOnClickListener {
                 triggerVibration(30)
-                showNotebookSubDialog(et) // 传入当前的输入框，以便绝对覆盖
+                showNotebookSubDialog(et)
             }
-
-            // 🌟 动态智能隐显控制器
-            fun updateSpeakerState(hasFocus: Boolean, currentText: String) {
-                if (hasFocus || currentText.isNotEmpty()) {
-                    speakerBtn.visibility = View.VISIBLE
-                } else {
-                    speakerBtn.visibility = View.GONE
-                }
-            }
-
-            et.setOnFocusChangeListener { _, hasFocus ->
-                val color = if (hasFocus) activeColor else "#444444"
-                val width = if (hasFocus) 5 else 2
-                et.background = GradientDrawable().apply {
-                    setColor(Color.parseColor("#0F0F0F"))
-                    setStroke(width, Color.parseColor(color))
-                    cornerRadius = 20f
-                }
-                et.minLines = if (hasFocus) 18 else 1
-                updateSpeakerState(hasFocus, et.text.toString().trim())
-            }
-
-            et.addTextChangedListener(object : android.text.TextWatcher {
-                override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
-                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
-                    updateSpeakerState(et.hasFocus(), s.toString().trim())
-                }
-                override fun afterTextChanged(s: android.text.Editable?) {}
-            })
 
             speakerBtn.setOnClickListener {
                 val input = et.text.toString().trim()
@@ -1334,7 +1297,7 @@ class MainActivity : AppCompatActivity() {
                 } else {
                     val voiceName = if (isTop) ptVoiceName else myVoiceName
                     val targetLangName = if (isTop) ptLangName else myLangName
-                    val voiceId = getSmartVoiceId(voiceName, targetLangName) // 🌟 使用智能路由获取真实发音ID
+                    val voiceId = getSmartVoiceId(voiceName, targetLangName)
 
                     edgeTts.speak(input, voiceId,
                         onNodeSelected = { _ ->
@@ -1375,7 +1338,7 @@ class MainActivity : AppCompatActivity() {
                 }
             }
 
-            // 组装整个垂直列
+            // 拼装视图
             btnContainer.addView(topBtnGroup)
             btnContainer.addView(spacer)
             btnContainer.addView(bottomBtnGroup)
@@ -1384,11 +1347,111 @@ class MainActivity : AppCompatActivity() {
             inputRow.addView(btnContainer)
             moduleLayout.addView(inputRow)
 
-            return moduleLayout
+            // 将组合好的 UI 返回出去
+            return ModuleUI(moduleLayout, title, inputRow, et, btnContainer, speakerBtn)
         }
 
-        layout.addView(createInputModule("✍️ 对方文字输入【 ${ptLangName} 】", isTop = true, activeColor = "#00BCFF"))
-        layout.addView(createInputModule("✍️ 我方文字输入【 ${myLangName} 】", isTop = false, activeColor = "#00E676"))
+        // 实例化上下两个模块
+        val topModule = createInputModule("✍️ 对方文字输入【 ${ptLangName} 】", isTop = true, activeColor = "#00BCFF")
+        val bottomModule = createInputModule("✍️ 我方文字输入【 ${myLangName} 】", isTop = false, activeColor = "#00E676")
+
+        layout.addView(topModule.root)
+        layout.addView(bottomModule.root)
+
+        // =========================================================
+        // 🧠 核心重构：状态协调器 (Coordinator) - 完美实现手风琴折叠效果
+        // =========================================================
+        fun updateSpeakerState(module: ModuleUI, hasFocus: Boolean, currentText: String) {
+            if (hasFocus || currentText.isNotEmpty()) {
+                module.speakerBtn.visibility = View.VISIBLE
+            } else {
+                module.speakerBtn.visibility = View.GONE
+            }
+        }
+
+        fun switchToTopFocus() {
+            // 展开上方
+            topModule.title.text = "✍️ 对方文字输入【 ${ptLangName} 】"
+            topModule.inputRow.visibility = View.VISIBLE
+            topModule.btnContainer.visibility = View.VISIBLE
+            topModule.et.minLines = 12
+
+            // 折叠下方
+            bottomModule.inputRow.visibility = View.GONE // 将下方主体彻底隐藏
+            bottomModule.title.text = "👉 点击切换：我方输入【 ${myLangName} 】" // 标题变为切换按钮
+        }
+
+        fun switchToBottomFocus() {
+            // 展开下方
+            bottomModule.title.text = "✍️ 我方文字输入【 ${myLangName} 】"
+            bottomModule.inputRow.visibility = View.VISIBLE
+            bottomModule.btnContainer.visibility = View.VISIBLE
+            bottomModule.et.minLines = 12
+
+            // 折叠上方
+            topModule.inputRow.visibility = View.GONE // 将上方主体彻底隐藏
+            topModule.title.text = "👉 点击切换：对方输入【 ${ptLangName} 】" // 标题变为切换按钮
+        }
+
+        fun resetInitialState() {
+            // 初始形态：极其克制。两者都只显示单薄的输入框，隐藏右侧的柱状按钮
+            topModule.title.text = "✍️ 对方文字输入【 ${ptLangName} 】"
+            topModule.inputRow.visibility = View.VISIBLE
+            topModule.btnContainer.visibility = View.GONE
+            topModule.et.minLines = 2
+
+            bottomModule.title.text = "✍️ 我方文字输入【 ${myLangName} 】"
+            bottomModule.inputRow.visibility = View.VISIBLE
+            bottomModule.btnContainer.visibility = View.GONE
+            bottomModule.et.minLines = 2
+        }
+
+        // ==========================================
+        // 🔗 绑定协调器事件 (取代以前各自为战的监听)
+        // ==========================================
+        fun bindModuleEvents(module: ModuleUI, isTop: Boolean, activeColor: String) {
+            // 1. 容错退路：点击折叠的小标题 -> 先把界面展开，再强制请求焦点并拉起软键盘
+            module.title.setOnClickListener {
+                if (isTop) switchToTopFocus() else switchToBottomFocus()
+                module.et.post {
+                    module.et.requestFocus()
+                    val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
+                    imm.showSoftInput(module.et, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT)
+                }
+            }
+
+            // 2. 焦点监听：处理边框高亮与自动协调折叠
+            module.et.setOnFocusChangeListener { _, hasFocus ->
+                val color = if (hasFocus) activeColor else "#444444"
+                val width = if (hasFocus) 5 else 2
+                module.et.background = GradientDrawable().apply {
+                    setColor(Color.parseColor("#0F0F0F"))
+                    setStroke(width, Color.parseColor(color))
+                    cornerRadius = 20f
+                }
+
+                // 一旦获得焦点，通知协调器折叠另一方
+                if (hasFocus) {
+                    if (isTop) switchToTopFocus() else switchToBottomFocus()
+                }
+                updateSpeakerState(module, hasFocus, module.et.text.toString().trim())
+            }
+
+            // 3. 文字监听：单独控制喇叭
+            module.et.addTextChangedListener(object : android.text.TextWatcher {
+                override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                    updateSpeakerState(module, module.et.hasFocus(), s.toString().trim())
+                }
+                override fun afterTextChanged(s: android.text.Editable?) {}
+            })
+        }
+
+        bindModuleEvents(topModule, isTop = true, activeColor = "#00BCFF")
+        bindModuleEvents(bottomModule, isTop = false, activeColor = "#00E676")
+
+        // 界面刚弹出来时，让它们处于初始“克制选择”状态
+        resetInitialState()
 
         dialog = AlertDialog.Builder(this)
             .setView(layout)
@@ -1397,7 +1460,7 @@ class MainActivity : AppCompatActivity() {
         dialog.window?.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(Color.TRANSPARENT))
         dialog.window?.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
 
-        // 🌟 终极防线：只要对话框因为任何原因消失了（点旁边、按返回键），立刻停掉TTS，杜绝退到主界面还听见幽灵朗读
+        // 🌟 终极防线：只要对话框因为任何原因消失了，立刻停掉TTS，杜绝退到主界面还听见幽灵朗读
         dialog.setOnDismissListener { edgeTts.stop() }
 
         if (!isFinishing && !isDestroyed) dialog.show()
