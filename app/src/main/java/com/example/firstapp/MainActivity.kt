@@ -638,15 +638,7 @@ class MainActivity : AppCompatActivity() {
         val langItems = AppConstants.getFlatLangList()
         val voiceItems = AppConstants.getFlatVoiceList()
 
-        // ==========================================
-        // 🏅 【已置顶】我方语种 (下半屏) 卡片
-        // ==========================================
-        val myCard = createCard()
-        layout.addView(myCard)
-        addTitle("🗣️ 我方语种 (下半屏)", null, myCard, "#00E676")
-        val spMe = addSpinner(langItems, myLangName, myCard)
-        addTitle("🔊 我方发音音色", null, myCard, "#00E676")
-        val spMeVoice = addSpinner(voiceItems, myVoiceName, myCard)
+
 
         // ==========================================
         // 🏅 【已置顶】对方语种 (上半屏) 卡片
@@ -657,6 +649,16 @@ class MainActivity : AppCompatActivity() {
         val spPt = addSpinner(langItems, ptLangName, ptCard)
         addTitle("🔊 对方发音音色", null, ptCard, "#00BCFF")
         val spPtVoice = addSpinner(voiceItems, ptVoiceName, ptCard)
+
+        // ==========================================
+        // 🏅 【已置顶】我方语种 (下半屏) 卡片
+        // ==========================================
+        val myCard = createCard()
+        layout.addView(myCard)
+        addTitle("🗣️ 我方语种 (下半屏)", null, myCard, "#00E676")
+        val spMe = addSpinner(langItems, myLangName, myCard)
+        addTitle("🔊 我方发音音色", null, myCard, "#00E676")
+        val spMeVoice = addSpinner(voiceItems, myVoiceName, myCard)
 
         fun bindBiDirectionalSyncLogic(spLang: Spinner, spVoice: Spinner) {
             var isSyncing = false
@@ -1012,22 +1014,23 @@ class MainActivity : AppCompatActivity() {
 
         // ================= 📝 正文区 (保持不变) =================
         addSection("🎙️ 基础对讲与 UI 控件", """
-            <b>• 语音输入：</b>长按下方/上方麦克风录音，松开即触发翻译与播报。<br>
-            <b>• 滑动取消：</b>长按录音时，手指向上滑动至指定距离即可安全取消发送。<br>
-            <b>• 键盘输入：</b>点击中央 <b>[ ✍️ ]</b> 呼出键盘，应对嘈杂环境或生僻词汇。<br>
+            <b>• 语音输入：</b>长按🎙️下方/上方麦克风录音，松开即触发翻译与播报。<br>
+            <b>• 滑动取消：</b>长按录音时，手指向上滑动即可取消发送。<br>
+            <b>• 键盘输入：</b>点击中央 <b>[ ✍️ ]</b> 呼出键盘，直接输入文字，文字可加入➕笔记本。<br>
             <b>• 语种互换：</b>点击中央 <b>[ ↕️ ]</b> 快速对调双方语种与音色。<br>
-            <b>• 一键清屏：</b>点击中央 <b>[ 🗑️ ]</b> 可彻底清空当前所有聊天记录。<br>
-            <b>• 字号调节：</b>点击右下角 <b>[ A+ / A- ]</b> 胶囊控制器，无级调节全局气泡字号。
+            <b>• 一键清屏：</b>点击中央 <b>[ 🗑️ ]</b> 彻底清空当前所有聊天记录。<br>
+            <b>• 字号调节：</b>点击右下角 <b>[ A+ / A- ]</b> 调节气泡字号。
         """.trimIndent(), "#00E676")
 
         addSection("✨ 气泡手势与视觉翻译", """
             <b>• 双击全屏展示：</b>对任意气泡<b>快速双击</b>，唤出高对比度「全屏大字报」，支持双指缩放，便于向他人展示。<br>
-            <b>• 长按快捷菜单：</b><b>长按</b>聊天气泡，可一键复制原文、译文，或将其打上幻听标签。<br>
+            <b>• 长按快捷菜单：</b><b>长按</b>聊天气泡，可一键复制原文/译文、<b>加入快捷笔记本</b>，或将其打上幻听标签。<br>
+            <b>• 快捷笔记本管理：</b>点击 ✍️ 在面板内 <b>[ 📑 ]</b> 展开管理。按任意条目可修改名称与正文</b>。<br>
             <b>• 相机视觉提取：</b>点击左下角 <b>[ 📷 ]</b>，支持拍照或选图。利用裁剪框精准圈选文本，AI 将自动进行 OCR 提取并翻译，甚至支持直接语音朗读图片内容。
         """.trimIndent(), "#00BCFF")
 
         addSection("⚙️ 设置面板：AI 引擎配置", """
-            <b>• Groq 主力引擎：</b>提供极速翻译。需自行前往官网申请 API Key。点击「拉取最新模型」可实时更新云端可用模型 (默认推荐 Qwen 系列/70B等)。<br>
+            <b>• Groq 主力引擎：</b>提供极速语音识别与翻译。需自行前往官网申请 API Key。点击「拉取最新模型」可实时更新云端可用模型 (默认推荐 Qwen 系列/70B等)。<br>
             <b>• Gemini 备用/视觉引擎：</b>当主力网络阻断时，系统将静默无缝切换至 Gemini 兜底；此外，所有的图片翻译均由 Gemini 引擎独立完成。同样需自备 API Key。
         """.trimIndent(), "#FFA500")
 
@@ -1050,12 +1053,12 @@ class MainActivity : AppCompatActivity() {
             <b>2. 责任隔离与自备密钥 (BYOK Liability)：</b><br>
             本应用强制采用自备密钥 (Bring Your Own Key) 模式运行。用户自主填写的 API Key 所产生的数据传输、存储规范及合规性，受该 API 供应商 (如 Google LLC, Groq Inc.) 的最终用户服务条款约束。因输出违规内容或滥用接口导致的账户封禁、法律纠纷及一切财务损失，完全由使用者个人独立承担。<br><br>
             <b>3. 按原样提供与免责 (AS-IS Disclaimer)：</b><br>
-            本应用代码遵循开源软件惯例，按“原样 (AS-IS)”提供，不附带任何明示或暗示的法律担保。开发者不对因本地网络阻断、API 供应商策略变动、第三方 TTS 节点失效或任何不可抗力导致的可用性中断承担连带维护义务或侵权赔偿责任。
+            本应用代码遵循开源软件惯例，按“原样 (AS-IS)”提供，不附带任何明示或暗示的法律担保。开发者不对因本地网络阻断、API 供应商策略变动、第三方 TTS 节点失效或任何不可抗力导致的可用性中断承担连带维护义务 or 侵权赔偿责任。
         """.trimIndent(), "#888888")
 
         // 署名留白区
         val tvFooter = TextView(context).apply {
-            text = "Designed & Developed by KANE\nVer v5.1.1 Pro"
+            text = "Designed & Developed by KANE\nVer v5.1.3 Pro"
             setTextColor(Color.parseColor("#666666"))
             textSize = 12f
             gravity = android.view.Gravity.CENTER
@@ -1263,13 +1266,20 @@ class MainActivity : AppCompatActivity() {
                 it.animate().scaleX(0.8f).scaleY(0.8f).setDuration(100).withEndAction {
                     it.animate().scaleX(1f).scaleY(1f).setDuration(100).start()
                 }.start()
+
                 val rawTitle = content.replace("\n", " ").take(8)
                 val title = if (content.length > 8) "$rawTitle..." else rawTitle
+
+                // 🌟 新增：获取当前时间作为时间戳
+                val timeFormatter = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.getDefault())
+                val timeStr = timeFormatter.format(java.util.Date())
+
                 val array = getNotebookData()
                 val newObj = org.json.JSONObject().apply {
                     put("id", java.util.UUID.randomUUID().toString())
                     put("title", title)
                     put("content", content)
+                    put("timestamp", timeStr) // 👈 存入时间戳
                 }
                 val newArray = org.json.JSONArray()
                 newArray.put(newObj)
@@ -1692,16 +1702,41 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showBubbleOptionsDialog(msg: ChatMessage) {
-        // 🌟 核心调整：编辑上移，拉黑下放到底部
-        val options = arrayOf("📋 复制译文", "📄 复制原文", "✏️ 编辑并重译", "🎯 标记为幻听拉黑")
+        val options = arrayOf("📋 复制译文", "📄 复制原文", "📑 加入快捷笔记本", "✏️ 编辑并重译", "🎯 标记为幻听拉黑")
 
         val optionsDialog = AlertDialog.Builder(this)
             .setItems(options) { _, which ->
                 when (which) {
                     0 -> copyToClipboard("译文", msg.translatedText)
                     1 -> copyToClipboard("原文", msg.originalText)
-                    2 -> showEditDialog(msg)         // 👈 改为 2
-                    3 -> showKillerDialog(msg.originalText) // 👈 改为 3
+                    2 -> {
+                        val content = msg.originalText
+                        val rawTitle = content.replace("\n", " ").take(12)
+                        val title = if (content.length > 12) "$rawTitle..." else rawTitle
+
+                        // 🌟 新增：获取当前时间作为时间戳
+                        val timeFormatter = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.getDefault())
+                        val timeStr = timeFormatter.format(java.util.Date())
+
+                        val array = getNotebookData()
+                        val newObj = org.json.JSONObject().apply {
+                            put("id", java.util.UUID.randomUUID().toString())
+                            put("title", title)
+                            put("content", content)
+                            put("timestamp", timeStr) // 👈 存入时间戳
+                        }
+
+                        val newArray = org.json.JSONArray()
+                        newArray.put(newObj)
+                        for (i in 0 until array.length()) newArray.put(array.getJSONObject(i))
+
+                        sharedPrefs.edit().putString("kane_notebook_data", newArray.toString()).apply()
+
+                        triggerVibration(40)
+                        Toast.makeText(this, "✅ 已存入快捷笔记本", Toast.LENGTH_SHORT).show()
+                    }
+                    3 -> showEditDialog(msg)
+                    4 -> showKillerDialog(msg.originalText)
                 }
             }
             .create()
@@ -2524,7 +2559,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         val hintText = TextView(context).apply {
-            text = "✏️ 识别有误？请直接修改原文："
+            text = "✏️ 识别有误？可直接修改原文："
             setTextColor(Color.parseColor("#BBBBBB"))
             textSize = 14f
             setPadding(0, 0, 0, 20)
@@ -2671,6 +2706,7 @@ class MainActivity : AppCompatActivity() {
                 val id = item.optString("id")
                 val title = item.optString("title")
                 val content = item.optString("content")
+                val timestamp = item.optString("timestamp", "刚刚") // 👈 读取时间戳
 
                 val row = LinearLayout(context).apply {
                     orientation = LinearLayout.VERTICAL
@@ -2683,7 +2719,6 @@ class MainActivity : AppCompatActivity() {
                         bottomMargin = 20
                     }
 
-                    // 💡 交互逻辑 C：绝对覆盖填入
                     setOnClickListener {
                         triggerVibration(30)
                         targetEditText.setText(content)
@@ -2691,15 +2726,16 @@ class MainActivity : AppCompatActivity() {
                         dialog?.dismiss()
                     }
 
-                    // 💡 交互逻辑 D：长按呼出选项菜单
                     setOnLongClickListener {
                         triggerVibration(50)
-                        val options = arrayOf("📋 复制内容", "✏️ 修改标题", "❌ 删除条目")
+                        // 🌟 选项菜单名称已修改为“编辑笔记”
+                        val options = arrayOf("📋 复制内容", "✏️ 编辑笔记", "❌ 删除条目")
                         androidx.appcompat.app.AlertDialog.Builder(context)
                             .setItems(options) { _, which ->
                                 when (which) {
                                     0 -> copyToClipboard("笔记", content)
-                                    1 -> showEditNotebookTitleDialog(id, title) { renderList() }
+                                    // 🌟 核心：点击编辑时，把原来的标题和内容一起传过去
+                                    1 -> showEditNotebookDialog(id, title, content) { renderList() }
                                     2 -> {
                                         deleteNotebookEntry(id)
                                         renderList()
@@ -2712,24 +2748,42 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
 
+                // 🌟 新增：水平布局，左边放标题，右边放时间戳
+                val titleRow = LinearLayout(context).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+                        bottomMargin = 10
+                    }
+                }
+
                 val tvItemTitle = TextView(context).apply {
                     text = title
                     setTextColor(Color.parseColor("#00E676"))
                     textSize = 15f
                     setTypeface(null, android.graphics.Typeface.BOLD)
-                    setPadding(0, 0, 0, 8)
+                    layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f) // 自动撑满剩余空间
                 }
+
+                val tvItemTime = TextView(context).apply {
+                    text = timestamp
+                    setTextColor(Color.parseColor("#666666")) // 灰暗的赛博朋克色
+                    textSize = 12f
+                    gravity = android.view.Gravity.END or android.view.Gravity.CENTER_VERTICAL
+                }
+
+                titleRow.addView(tvItemTitle)
+                titleRow.addView(tvItemTime)
 
                 val tvItemContent = TextView(context).apply {
                     text = content
                     setTextColor(Color.parseColor("#AAAAAA"))
                     textSize = 13f
-                    maxLines = 1
-                    ellipsize = android.text.TextUtils.TruncateAt.END // 单行超长截断处理
+                    maxLines = 2 // 放宽到两行，展示更多内容
+                    ellipsize = android.text.TextUtils.TruncateAt.END
                 }
 
-                row.addView(tvItemTitle)
-                row.addView(tvItemContent)
+                row.addView(titleRow) // 装入带时间的标题行
+                row.addView(tvItemContent) // 装入正文内容
                 listContainer.addView(row)
             }
         }
@@ -2754,7 +2808,7 @@ class MainActivity : AppCompatActivity() {
         sharedPrefs.edit().putString("kane_notebook_data", newArray.toString()).apply()
     }
 
-    private fun showEditNotebookTitleDialog(targetId: String, oldTitle: String, onUpdated: () -> Unit) {
+    private fun showEditNotebookDialog(targetId: String, oldTitle: String, oldContent: String, onUpdated: () -> Unit) {
         val context = this
         val layout = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
@@ -2762,36 +2816,80 @@ class MainActivity : AppCompatActivity() {
             setBackgroundColor(Color.parseColor("#1A1A1B"))
         }
 
+        // --- 📌 标题输入区 ---
+        val tvTitleLabel = TextView(context).apply {
+            text = "📌 笔记名称："
+            setTextColor(Color.parseColor("#BBBBBB"))
+            textSize = 13f
+            setPadding(0, 0, 0, 15)
+        }
+        layout.addView(tvTitleLabel)
+
         val etNewTitle = EditText(context).apply {
             setText(oldTitle)
             setTextColor(Color.WHITE)
-            textSize = 16f
+            textSize = 15f
             setPadding(30, 30, 30, 30)
             background = GradientDrawable().apply {
                 setColor(Color.parseColor("#0F0F0F"))
-                setStroke(2, Color.parseColor("#00BCFF"))
+                setStroke(2, Color.parseColor("#00BCFF")) // 蓝边框
                 cornerRadius = 15f
             }
             setSelection(text.length)
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+                bottomMargin = 40
+            }
         }
         layout.addView(etNewTitle)
 
+        // --- 📝 内容输入区 ---
+        val tvContentLabel = TextView(context).apply {
+            text = "📝 笔记内容："
+            setTextColor(Color.parseColor("#BBBBBB"))
+            textSize = 13f
+            setPadding(0, 0, 0, 15)
+        }
+        layout.addView(tvContentLabel)
+
+        val etNewContent = EditText(context).apply {
+            setText(oldContent)
+            setTextColor(Color.WHITE)
+            textSize = 15f
+            setPadding(30, 30, 30, 30)
+            gravity = android.view.Gravity.TOP or android.view.Gravity.START
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE
+            minLines = 4
+            maxLines = 10
+            background = GradientDrawable().apply {
+                setColor(Color.parseColor("#0F0F0F"))
+                setStroke(2, Color.parseColor("#00E676")) // 绿边框，区分视觉层次
+                cornerRadius = 15f
+            }
+        }
+        layout.addView(etNewContent)
+
         androidx.appcompat.app.AlertDialog.Builder(this)
-            .setCustomTitle(createCyberTitle("✏️ 给语料起个新名字"))
+            .setCustomTitle(createCyberTitle("✏️ 编辑与整理笔记"))
             .setView(layout)
             .setPositiveButton("保存更改") { _, _ ->
                 val newTitle = etNewTitle.text.toString().trim()
-                if (newTitle.isNotEmpty()) {
+                val newContent = etNewContent.text.toString().trim()
+
+                if (newTitle.isNotEmpty() && newContent.isNotEmpty()) {
                     val array = getNotebookData()
                     for (i in 0 until array.length()) {
                         val item = array.getJSONObject(i)
                         if (item.optString("id") == targetId) {
                             item.put("title", newTitle)
+                            item.put("content", newContent)
+                            // 注意：保留最初创建的时间戳，不更新它
                             break
                         }
                     }
                     sharedPrefs.edit().putString("kane_notebook_data", array.toString()).apply()
                     onUpdated() // 自动刷新列表渲染
+                } else {
+                    Toast.makeText(context, "⚠️ 名称和内容均不能为空", Toast.LENGTH_SHORT).show()
                 }
             }
             .setNegativeButton("取消", null)
