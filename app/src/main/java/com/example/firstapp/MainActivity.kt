@@ -69,6 +69,11 @@ class MainActivity : AppCompatActivity() {
             Toast.makeText(this, "⚠️ 裁剪异常: ${cropError?.message}", Toast.LENGTH_SHORT).show()
         }
     }
+    // 👇 新增 5. 笔记本回调记忆与 JSON 文件导入启动器
+    private var activeNotebookCallback: ((String) -> Unit)? = null
+    private val importNotebookLauncher = registerForActivityResult(androidx.activity.result.contract.ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) processImportedFile(uri)
+    }
 
     private lateinit var layoutFullscreenOverlay: FrameLayout
     private lateinit var tvFullscreenText: TextView
@@ -149,7 +154,28 @@ class MainActivity : AppCompatActivity() {
         btnSwap = findViewById(R.id.btn_swap)
         btnClear = findViewById(R.id.btn_clear)
         btnKeyboard = findViewById(R.id.btn_keyboard)
+        // 1. 保留原本的单击事件（弹出输入面板）
         btnKeyboard.setOnClickListener { showTextInputDialog() }
+
+        // 2. 🌟 新增：长按事件（直接弹出笔记本并一键翻译发送）
+        btnKeyboard.setOnLongClickListener {
+            triggerVibration(50)
+
+            // 🛡️ 防御 Bug 1：强制打断当前可能正在播放的系统 TTS，防止音频抢占
+            if (edgeTts.isSpeaking) {
+                edgeTts.stop()
+                resetIsland()
+            }
+
+            // 呼出改造后的笔记本模块
+            showNotebookSubDialog { content ->
+                // 🛡️ 核心管道调用：isTop = false 代表强制作为“我方”的母语发送
+                processTextPipeline(content, isTop = false)
+            }
+
+            // 🛡️ 防御 Bug 4：返回 true，彻底消费掉长按事件，杜绝松手时误触单击
+            true
+        }
 
         rvTopChat = findViewById(R.id.rv_top_chat)
         rvBottomChat = findViewById(R.id.rv_bottom_chat)
@@ -1012,11 +1038,12 @@ class MainActivity : AppCompatActivity() {
             layout.addView(tvContent)
         }
 
-        // ================= 📝 正文区 (保持不变) =================
+        // ================= 📝 正文区 =================
         addSection("🎙️ 基础对讲与 UI 控件", """
             <b>• 语音输入：</b>长按🎙️下方/上方麦克风录音，松开即触发翻译与播报。<br>
             <b>• 滑动取消：</b>长按录音时，手指向上滑动即可取消发送。<br>
             <b>• 键盘输入：</b>点击中央 <b>[ ✍️ ]</b> 呼出键盘，直接输入文字，文字可加入➕笔记本。<br>
+            <b>• 极速快译：</b>长按中央 <b>[ ✍️ ]</b> 直接免键盘弹出快捷笔记本，点击条目瞬间完成翻译并自动语音朗读，适用于高频应急对话。<br>
             <b>• 语种互换：</b>点击中央 <b>[ ↕️ ]</b> 快速对调双方语种与音色。<br>
             <b>• 一键清屏：</b>点击中央 <b>[ 🗑️ ]</b> 彻底清空当前所有聊天记录。<br>
             <b>• 字号调节：</b>点击右下角 <b>[ A+ / A- ]</b> 调节气泡字号。
@@ -1026,7 +1053,8 @@ class MainActivity : AppCompatActivity() {
             <b>• 双击全屏展示：</b>对任意气泡<b>快速双击</b>，唤出高对比度「全屏大字报」，支持双指缩放，便于向他人展示。<br>
             <b>• 长按快捷菜单：</b><b>长按</b>聊天气泡，可一键复制原文/译文、<b>加入快捷笔记本</b>，或将其打上幻听标签。<br>
             <b>• 快捷笔记本管理：</b>点击 ✍️ 在面板内 <b>[ 📑 ]</b> 展开管理。按任意条目可修改名称与正文</b>。<br>
-            <b>• 相机视觉提取：</b>点击左下角 <b>[ 📷 ]</b>，支持拍照或选图。利用裁剪框精准圈选文本，AI 将自动进行 OCR 提取并翻译，甚至支持直接语音朗读图片内容。
+            <b>• 相机视觉提取：</b>点击左下角 <b>[ 📷 ]</b>，支持拍照或选图。利用裁剪框精准圈选文本，AI 将自动进行 OCR 提取并翻译，甚至支持直接语音朗读图片内容。<br>
+            <b>• 笔记本指令台：</b>点击笔记本右上角 <b>[ ⋮ ]</b> 呼出控制菜单，支持<b>📥导入笔记本（提供覆盖、追加、时间戳去重智能合并）</b>、<b>📤导出笔记本（系统分享面板免权保存）</b>、<b>🧹清空数据（带确认防误触机制）</b>以及<b>➕建立新笔记（直接在弹窗内原地创建并置顶）</b>。
         """.trimIndent(), "#00BCFF")
 
         addSection("⚙️ 设置面板：AI 引擎配置", """
@@ -1035,10 +1063,10 @@ class MainActivity : AppCompatActivity() {
         """.trimIndent(), "#FFA500")
 
         addSection("🌐 设置面板：云端 TTS 配置", """
-    <b>• 语音开关：</b>可自由勾选是否开启「自动语音播报 (TTS)」。<br>
-    <b>• 节点拉取机制：</b>采用微软高保真发音。当发音失效时，点击<b>「一键获取最新可用线路」</b>，系统会优先从 GitHub CDN 极速拉取最新集群列表；若遭遇网络阻断，将静默降级至 Hugging Face 备用通道获取。<br>
-    <b>• 自定义 URL 与暗号：</b>支持手动填入私人部署的 TTS 节点地址。<b>「专属访问暗号 (Token)」</b>用于验证身份，防止私人云端节点被非法盗刷接口额度。
-""".trimIndent(), "#00BCFF")
+            <b>• 语音开关：</b>可自由勾选是否开启「自动语音播报 (TTS)」。<br>
+            <b>• 节点拉取机制：</b>采用微软高保真发音。当发音失效时，点击<b>「一键获取最新可用线路」</b>，系统会优先从 GitHub CDN 极速拉取最新集群列表；若遭遇网络阻断，将静默降级至 Hugging Face 备用通道获取。<br>
+            <b>• 自定义 URL 与暗号：</b>支持手动填入私人部署的 TTS 节点地址。<b>「专属访问暗号 (Token)」</b>用于验证身份，防止私人云端节点被非法盗刷接口额度。
+        """.trimIndent(), "#00BCFF")
 
         addSection("🛡️ 设置面板：幻听防火墙", """
             <b>• 触发原理：</b>在极端安静环境下，AI 偶会将底噪强行解析为“字幕”、“谢谢观看”等无意义的“幻觉词汇”。<br>
@@ -1049,7 +1077,7 @@ class MainActivity : AppCompatActivity() {
         addSection("⚖️ 隐私合规与免责声明 (GDPR & TOU)", """
             本软件架构与数据处理流程严格遵从《欧盟通用数据保护条例》(GDPR) 规范，请您在使用前知悉并同意以下条款：<br><br>
             <b>1. 数据处理与零留存 (Zero Retention)：</b><br>
-            本应用作为纯本地端请求工具运行。麦克风音频、相机图像及文本数据仅在设备内存中进行短暂的加密封装，并直接通过 HTTPS 协议传输至第三方 API 服务商 (Groq/Google/Microsoft)。应用不在本地持久化存储、记录或向任何其他未经授权的服务器上传用户的个人隐私数据。视觉缓存文件严格执行即时销毁 (阅后即焚) 机制。<br><br>
+            本应用作为纯本地端请求工具运行。麦克风音频、相机图像及文本数据仅在设备内存中进行短暂的加密封装，并直接通过 HTTPS 协议传输至第三方 API 服务商 (Groq/Google/Microsoft)。应用不在本地持久化存储、记录 or 向任何其他未经授权的服务器上传用户的个人隐私数据。视觉缓存文件严格执行即时销毁 (阅后即焚) 机制。<br><br>
             <b>2. 责任隔离与自备密钥 (BYOK Liability)：</b><br>
             本应用强制采用自备密钥 (Bring Your Own Key) 模式运行。用户自主填写的 API Key 所产生的数据传输、存储规范及合规性，受该 API 供应商 (如 Google LLC, Groq Inc.) 的最终用户服务条款约束。因输出违规内容或滥用接口导致的账户封禁、法律纠纷及一切财务损失，完全由使用者个人独立承担。<br><br>
             <b>3. 按原样提供与免责 (AS-IS Disclaimer)：</b><br>
@@ -1058,7 +1086,7 @@ class MainActivity : AppCompatActivity() {
 
         // 署名留白区
         val tvFooter = TextView(context).apply {
-            text = "Designed & Developed by KANE\nVer v5.1.3 Pro"
+            text = "Designed & Developed by KANE\nVer v5.1.4 Pro"
             setTextColor(Color.parseColor("#666666"))
             textSize = 12f
             gravity = android.view.Gravity.CENTER
@@ -1291,7 +1319,11 @@ class MainActivity : AppCompatActivity() {
 
             btnNotebook.setOnClickListener {
                 triggerVibration(30)
-                showNotebookSubDialog(et)
+                // 🌟 改为回调 (Callback) 模式接收文字，解除与 EditText 的强耦合
+                showNotebookSubDialog { content ->
+                    et.setText(content)
+                    et.setSelection(et.text.length) // 光标自动移到末尾
+                }
             }
 
             speakerBtn.setOnClickListener {
@@ -2655,13 +2687,145 @@ class MainActivity : AppCompatActivity() {
         val jsonStr = sharedPrefs.getString("kane_notebook_data", "[]") ?: "[]"
         return try { org.json.JSONArray(jsonStr) } catch (e: Exception) { org.json.JSONArray() }
     }
+    private fun exportNotebook() {
+        try {
+            val data = sharedPrefs.getString("kane_notebook_data", "[]") ?: "[]"
+            // 复用视觉引擎已经开辟好的缓存沙盒，系统免权放行
+            val cacheFolder = java.io.File(cacheDir, "kane_vision_cache")
+            if (!cacheFolder.exists()) cacheFolder.mkdirs()
 
-    private fun showNotebookSubDialog(targetEditText: EditText) {
+            val exportFile = java.io.File(cacheFolder, "Kane_Notebook_Backup.json")
+            exportFile.writeText(data, Charsets.UTF_8)
+
+            val uri = androidx.core.content.FileProvider.getUriForFile(this, "${packageName}.fileprovider", exportFile)
+            val shareIntent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                type = "application/json" // 声明这是 JSON 文件
+                putExtra(android.content.Intent.EXTRA_STREAM, uri)
+                addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            startActivity(android.content.Intent.createChooser(shareIntent, "将快捷笔记本备份至..."))
+        } catch (e: Exception) {
+            Toast.makeText(this, "⚠️ 导出备份失败: ${e.message}", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun processImportedFile(uri: android.net.Uri) {
+        try {
+            val inputStream = contentResolver.openInputStream(uri)
+            val jsonStr = inputStream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() } ?: ""
+            val importedArray = org.json.JSONArray(jsonStr)
+
+            if (importedArray.length() == 0) {
+                Toast.makeText(this, "⚠️ 导入中止：该备份文件内容为空", Toast.LENGTH_SHORT).show()
+                return
+            }
+            showImportStrategyDialog(importedArray)
+        } catch (e: Exception) {
+            // 🛡️ 航天级防御：文件破损或格式非 JSON，直接温柔拦截，不崩溃
+            Toast.makeText(this, "⚠️ 文件解析失败，请确保您选择的是正确的 KANE 备份文件", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun showImportStrategyDialog(importedArray: org.json.JSONArray) {
+        val options = arrayOf(
+            "🧠 智能合并 (去重并基于时间保留最新)",
+            "💥 覆盖本地 (清空现有笔记，仅保留备份)",
+            "➕ 全部追加 (保留本地，直接将备份加入末尾)"
+        )
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("✅ 成功读取 ${importedArray.length()} 条笔记，请选择：")
+            .setItems(options) { _, which ->
+                executeImportStrategy(importedArray, which)
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    private fun executeImportStrategy(importedArray: org.json.JSONArray, strategy: Int) {
+        val currentArray = getNotebookData()
+        val newArray = org.json.JSONArray()
+        val formatter = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.getDefault())
+
+        // 安全解析时间戳的辅助器
+        fun parseTimeSafe(timeStr: String): Long {
+            if (timeStr == "刚刚") return System.currentTimeMillis()
+            return try { formatter.parse(timeStr)?.time ?: 0L } catch (e: Exception) { 0L }
+        }
+
+        when (strategy) {
+            0 -> { // 🧠 智能合并
+                val mergedMap = mutableMapOf<String, org.json.JSONObject>()
+                // 1. 先把本地的装进 Map
+                for (i in 0 until currentArray.length()) {
+                    val item = currentArray.getJSONObject(i)
+                    mergedMap[item.optString("id")] = item
+                }
+                // 2. 拿导入的比对
+                for (i in 0 until importedArray.length()) {
+                    val importedItem = importedArray.getJSONObject(i)
+                    val id = importedItem.optString("id")
+                    if (mergedMap.containsKey(id)) {
+                        val localTime = parseTimeSafe(mergedMap[id]!!.optString("timestamp", ""))
+                        val importTime = parseTimeSafe(importedItem.optString("timestamp", ""))
+                        // 如果导入的文件比较新，就干掉本地的，覆盖它！
+                        if (importTime > localTime) mergedMap[id] = importedItem
+                    } else {
+                        // 本地没有的新笔记，无条件加入
+                        mergedMap[id] = importedItem
+                    }
+                }
+                // 3. 按照时间重新洗牌（最新的在最上面）
+                val sortedList = mergedMap.values.toList().sortedByDescending { parseTimeSafe(it.optString("timestamp", "")) }
+                for (item in sortedList) newArray.put(item)
+            }
+            1 -> { // 💥 强制覆盖
+                for (i in 0 until importedArray.length()) newArray.put(importedArray.getJSONObject(i))
+            }
+            2 -> { // ➕ 全部追加
+                // 先放旧的，再放新导入的
+                for (i in 0 until currentArray.length()) newArray.put(currentArray.getJSONObject(i))
+                for (i in 0 until importedArray.length()) {
+                    val item = importedArray.getJSONObject(i)
+                    // 🛡️ 防御：既然是追加，强制刷新所有导入的 ID，杜绝日后修改时发生 ID 撞车
+                    item.put("id", java.util.UUID.randomUUID().toString())
+                    newArray.put(item)
+                }
+            }
+        }
+
+        // 写入硬盘
+        sharedPrefs.edit().putString("kane_notebook_data", newArray.toString()).apply()
+        triggerVibration(50)
+        Toast.makeText(this, "🎉 笔记导入成功！", Toast.LENGTH_SHORT).show()
+
+        // 🌟 核心：无缝衔接！利用记忆器，瞬间重新弹出刷新后的笔记本！
+        activeNotebookCallback?.let { showNotebookSubDialog(it) }
+    }
+
+    private fun showNotebookSubDialog(onItemClicked: (String) -> Unit) {
+        // 🌟 记忆器：保存此时呼出笔记本的来源回调，以便未来无缝重开
+        activeNotebookCallback = onItemClicked
+        var dialog: androidx.appcompat.app.AlertDialog? = null
+
+        // 🌟 核心修复：声明一个局部的“刷新委托”变量，完美解决因局部函数生命顺序导致的无法引用问题
+        var refreshList: () -> Unit = {}
+
         val context = this
+        val density = context.resources.displayMetrics.density // 获取屏幕密度，用于 UI 精细化缩放
+
         val layout = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(50, 40, 50, 40)
+            setPadding((20 * density).toInt(), (15 * density).toInt(), (20 * density).toInt(), (15 * density).toInt())
             setBackgroundColor(Color.parseColor("#1A1A1B"))
+        }
+
+        // ==========================================
+        // 🌟 视觉微整形：三点式极简指令台 (Horizontal Title + ⋮)
+        // ==========================================
+        val titleRow = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
+            setPadding(0, 0, 0, (15 * density).toInt())
         }
 
         val tvTitle = TextView(context).apply {
@@ -2669,20 +2833,78 @@ class MainActivity : AppCompatActivity() {
             setTextColor(Color.parseColor("#00BCFF"))
             textSize = 16f
             setTypeface(null, android.graphics.Typeface.BOLD)
-            setPadding(0, 0, 0, 30)
         }
-        layout.addView(tvTitle)
 
+        // 占位弹簧，推开左右两侧
+        val spacer = android.widget.Space(context).apply {
+            layoutParams = LinearLayout.LayoutParams(0, 1, 1f)
+        }
+
+        // 💅 极致高冷的三点按钮
+        val btnMore = TextView(context).apply {
+            text = "⋮" // Unicode 垂直三点
+            setTextColor(Color.parseColor("#00BCFF"))
+            textSize = 22f
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            setPadding((15 * density).toInt(), (5 * density).toInt(), (15 * density).toInt(), (5 * density).toInt())
+
+            // 使用原生无边界水波纹点击反馈
+            val outValue = android.util.TypedValue()
+            context.theme.resolveAttribute(android.R.attr.selectableItemBackgroundBorderless, outValue, true)
+            setBackgroundResource(outValue.resourceId)
+
+            setOnClickListener { anchor ->
+                triggerVibration(30)
+                // 🚀 弹出原生控制台菜单
+                val popup = android.widget.PopupMenu(context, anchor)
+                popup.menu.add(0, 1, 0, "📥 导入笔记本")
+                popup.menu.add(0, 2, 1, "📤 导出笔记本")
+                popup.menu.add(0, 3, 2, "🧹 清空笔记本")
+                popup.menu.add(0, 4, 3, "➕ 建立新笔记")
+
+                popup.setOnMenuItemClickListener { menuItem ->
+                    when (menuItem.itemId) {
+                        1 -> { // 导入
+                            dialog?.dismiss() // 释放生命周期，直接拉起文件选择器
+                            importNotebookLauncher.launch("*/*")
+                            true
+                        }
+                        2 -> { // 导出
+                            exportNotebook()
+                            true
+                        }
+                        3 -> { // 清空
+                            // 🌟 此时我们使用已经初始化好的“刷新委托”
+                            showClearNotebookConfirmDialog { refreshList() }
+                            true
+                        }
+                        4 -> { // 建立新笔记
+                            // 🌟 此时我们使用已经初始化好的“刷新委托”
+                            showEditNotebookDialog("", "", "") { refreshList() }
+                            true
+                        }
+                        else -> false
+                    }
+                }
+                popup.show()
+            }
+        }
+
+        titleRow.addView(tvTitle)
+        titleRow.addView(spacer)
+        titleRow.addView(btnMore)
+        layout.addView(titleRow)
+
+        // ==========================================
+        // 👇 渲染原有列表的核心逻辑不变
+        // ==========================================
         val listContainer = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
 
         val scroll = ScrollView(context).apply {
-            val density = resources.displayMetrics.density
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, (350 * density).toInt())
             addView(listContainer)
         }
         layout.addView(scroll)
-
-        var dialog: androidx.appcompat.app.AlertDialog? = null
 
         fun renderList() {
             listContainer.removeAllViews()
@@ -2690,7 +2912,7 @@ class MainActivity : AppCompatActivity() {
 
             if (array.length() == 0) {
                 val tvEmpty = TextView(context).apply {
-                    text = "📭 笔记本空空如也\n在聊天框输入文字后，点击 ➕ 即可收藏"
+                    text = "📭 笔记本空空如也\n点击右上角 ⋮ 建立或导入笔记吧"
                     setTextColor(Color.parseColor("#555555"))
                     textSize = 14f
                     gravity = android.view.Gravity.CENTER
@@ -2706,35 +2928,32 @@ class MainActivity : AppCompatActivity() {
                 val id = item.optString("id")
                 val title = item.optString("title")
                 val content = item.optString("content")
-                val timestamp = item.optString("timestamp", "刚刚") // 👈 读取时间戳
+                val timestamp = item.optString("timestamp", "刚刚")
 
                 val row = LinearLayout(context).apply {
                     orientation = LinearLayout.VERTICAL
-                    setPadding(35, 25, 35, 25)
+                    setPadding((14 * density).toInt(), (10 * density).toInt(), (14 * density).toInt(), (10 * density).toInt())
                     background = GradientDrawable().apply {
                         setColor(Color.parseColor("#252526"))
                         cornerRadius = 15f
                     }
                     layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
-                        bottomMargin = 20
+                        bottomMargin = (10 * density).toInt()
                     }
 
                     setOnClickListener {
                         triggerVibration(30)
-                        targetEditText.setText(content)
-                        targetEditText.setSelection(targetEditText.text.length)
                         dialog?.dismiss()
+                        onItemClicked(content)
                     }
 
                     setOnLongClickListener {
                         triggerVibration(50)
-                        // 🌟 选项菜单名称已修改为“编辑笔记”
                         val options = arrayOf("📋 复制内容", "✏️ 编辑笔记", "❌ 删除条目")
                         androidx.appcompat.app.AlertDialog.Builder(context)
                             .setItems(options) { _, which ->
                                 when (which) {
                                     0 -> copyToClipboard("笔记", content)
-                                    // 🌟 核心：点击编辑时，把原来的标题和内容一起传过去
                                     1 -> showEditNotebookDialog(id, title, content) { renderList() }
                                     2 -> {
                                         deleteNotebookEntry(id)
@@ -2748,11 +2967,10 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
 
-                // 🌟 新增：水平布局，左边放标题，右边放时间戳
-                val titleRow = LinearLayout(context).apply {
+                val itemTitleRow = LinearLayout(context).apply {
                     orientation = LinearLayout.HORIZONTAL
                     layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
-                        bottomMargin = 10
+                        bottomMargin = (4 * density).toInt()
                     }
                 }
 
@@ -2761,32 +2979,35 @@ class MainActivity : AppCompatActivity() {
                     setTextColor(Color.parseColor("#00E676"))
                     textSize = 15f
                     setTypeface(null, android.graphics.Typeface.BOLD)
-                    layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f) // 自动撑满剩余空间
+                    layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
                 }
 
                 val tvItemTime = TextView(context).apply {
                     text = timestamp
-                    setTextColor(Color.parseColor("#666666")) // 灰暗的赛博朋克色
+                    setTextColor(Color.parseColor("#666666"))
                     textSize = 12f
                     gravity = android.view.Gravity.END or android.view.Gravity.CENTER_VERTICAL
                 }
 
-                titleRow.addView(tvItemTitle)
-                titleRow.addView(tvItemTime)
+                itemTitleRow.addView(tvItemTitle)
+                itemTitleRow.addView(tvItemTime)
 
                 val tvItemContent = TextView(context).apply {
                     text = content
                     setTextColor(Color.parseColor("#AAAAAA"))
                     textSize = 13f
-                    maxLines = 2 // 放宽到两行，展示更多内容
+                    maxLines = 2
                     ellipsize = android.text.TextUtils.TruncateAt.END
                 }
 
-                row.addView(titleRow) // 装入带时间的标题行
-                row.addView(tvItemContent) // 装入正文内容
+                row.addView(itemTitleRow)
+                row.addView(tvItemContent)
                 listContainer.addView(row)
             }
         }
+
+        // 🌟 核心绑定：在 renderList 本地函数生命完毕后，将真实的刷新逻辑挂载到“委托”上
+        refreshList = { renderList() }
 
         renderList()
 
@@ -2794,8 +3015,8 @@ class MainActivity : AppCompatActivity() {
             .setView(layout)
             .create()
 
-        dialog.window?.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(Color.TRANSPARENT))
-        if (!isFinishing && !isDestroyed) dialog.show()
+        dialog?.window?.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(Color.TRANSPARENT))
+        if (!isFinishing && !isDestroyed) dialog?.show()
     }
 
     private fun deleteNotebookEntry(targetId: String) {
@@ -2868,8 +3089,11 @@ class MainActivity : AppCompatActivity() {
         }
         layout.addView(etNewContent)
 
+        // 根据 targetId 决定大标题文案
+        val dialogTitle = if (targetId.isEmpty()) "➕ 建立新笔记" else "✏️ 编辑与整理笔记"
+
         androidx.appcompat.app.AlertDialog.Builder(this)
-            .setCustomTitle(createCyberTitle("✏️ 编辑与整理笔记"))
+            .setCustomTitle(createCyberTitle(dialogTitle))
             .setView(layout)
             .setPositiveButton("保存更改") { _, _ ->
                 val newTitle = etNewTitle.text.toString().trim()
@@ -2877,17 +3101,36 @@ class MainActivity : AppCompatActivity() {
 
                 if (newTitle.isNotEmpty() && newContent.isNotEmpty()) {
                     val array = getNotebookData()
-                    for (i in 0 until array.length()) {
-                        val item = array.getJSONObject(i)
-                        if (item.optString("id") == targetId) {
-                            item.put("title", newTitle)
-                            item.put("content", newContent)
-                            // 注意：保留最初创建的时间戳，不更新它
-                            break
+
+                    if (targetId.isEmpty()) {
+                        // 🌟 新建模式：自动获取当前最新时间，并置顶插入原数据中
+                        val timeFormatter = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.getDefault())
+                        val timeStr = timeFormatter.format(java.util.Date())
+                        val newObj = org.json.JSONObject().apply {
+                            put("id", java.util.UUID.randomUUID().toString())
+                            put("title", newTitle)
+                            put("content", newContent)
+                            put("timestamp", timeStr)
                         }
+                        val newArray = org.json.JSONArray()
+                        newArray.put(newObj) // 新创建的文件置顶
+                        for (i in 0 until array.length()) {
+                            newArray.put(array.getJSONObject(i))
+                        }
+                        sharedPrefs.edit().putString("kane_notebook_data", newArray.toString()).apply()
+                    } else {
+                        // ✏️ 编辑模式：正常比对并保存
+                        for (i in 0 until array.length()) {
+                            val item = array.getJSONObject(i)
+                            if (item.optString("id") == targetId) {
+                                item.put("title", newTitle)
+                                item.put("content", newContent)
+                                break
+                            }
+                        }
+                        sharedPrefs.edit().putString("kane_notebook_data", array.toString()).apply()
                     }
-                    sharedPrefs.edit().putString("kane_notebook_data", array.toString()).apply()
-                    onUpdated() // 自动刷新列表渲染
+                    onUpdated() // 自动重渲染当前页面
                 } else {
                     Toast.makeText(context, "⚠️ 名称和内容均不能为空", Toast.LENGTH_SHORT).show()
                 }
@@ -2901,5 +3144,18 @@ class MainActivity : AppCompatActivity() {
     private fun getSmartVoiceId(voiceName: String, langName: String): String {
         // 废弃之前的身份证掉包逻辑，直接返回原始西里尔 ID，彻底消灭 500 崩溃
         return AppConstants.TTS_VOICES[voiceName] ?: "zh-CN-XiaoxiaoNeural"
+    }
+    private fun showClearNotebookConfirmDialog(onCleared: () -> Unit) {
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("⚠️ 警告")
+            .setMessage("确定要清空当前的快捷笔记本吗？此操作将抹除所有记录且无法撤销！")
+            .setPositiveButton("确定清空") { _, _ ->
+                sharedPrefs.edit().putString("kane_notebook_data", "[]").apply()
+                triggerVibration(60)
+                Toast.makeText(this, "🧹 笔记本已全部清空", Toast.LENGTH_SHORT).show()
+                onCleared()
+            }
+            .setNegativeButton("取消", null)
+            .show()
     }
 }
