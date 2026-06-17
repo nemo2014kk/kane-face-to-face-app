@@ -15,6 +15,7 @@ class AiEngine {
 
     var currentGroqModel: String = "qwen/qwen3-32b"
     var currentGeminiModel: String = "gemini-3.1-flash-lite" // 🌟 修复：改为指定的最新默认模型
+    var currentGroqAsrModel: String = "whisper-large-v3" // 🌟 默认启用高精度的满血版引擎
 
     // 🌟 核心调优 1：专门为 AI 多模态大模型放宽的宽带级超时设置
     private val client = OkHttpClient.Builder()
@@ -33,9 +34,10 @@ class AiEngine {
         return true
     }
 
-    fun fetchGroqModels(callback: (Boolean, List<String>) -> Unit) {
+    // 🌟 修改：支持同时返回 Text 文本模型列表和 ASR 语音模型列表
+    fun fetchGroqModels(callback: (Boolean, List<String>, List<String>) -> Unit) {
         if (groqApiKey.isBlank()) {
-            mainHandler.post { callback(false, emptyList()) }
+            mainHandler.post { callback(false, emptyList(), emptyList()) }
             return
         }
         val request = Request.Builder()
@@ -46,7 +48,7 @@ class AiEngine {
 
         client.newCall(request).enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
-                mainHandler.post { callback(false, emptyList()) }
+                mainHandler.post { callback(false, emptyList(), emptyList()) }
             }
             override fun onResponse(call: Call, response: Response) {
                 val resStr = response.body?.string() ?: ""
@@ -54,19 +56,28 @@ class AiEngine {
                     if (response.isSuccessful) {
                         try {
                             val dataArray = JSONObject(resStr).getJSONArray("data")
-                            val models = mutableListOf<String>()
+                            val textModels = mutableListOf<String>()
+                            val asrModels = mutableListOf<String>()
+
                             for (i in 0 until dataArray.length()) {
                                 val modelId = dataArray.getJSONObject(i).getString("id")
-                                if (!modelId.contains("whisper") && !modelId.contains("guard")) {
-                                    models.add(modelId)
+                                // 排除官方安全拦截模型
+                                if (!modelId.contains("guard")) {
+                                    // 🌟 智能分发：将 whisper 扔进语音盒子，其他的扔进文本盒子
+                                    if (modelId.contains("whisper", ignoreCase = true)) {
+                                        asrModels.add(modelId)
+                                    } else {
+                                        textModels.add(modelId)
+                                    }
                                 }
                             }
-                            models.sort()
-                            callback(true, models)
+                            textModels.sort()
+                            asrModels.sort()
+                            callback(true, textModels, asrModels)
                         } catch (e: Exception) {
-                            callback(false, emptyList())
+                            callback(false, emptyList(), emptyList())
                         }
-                    } else callback(false, emptyList())
+                    } else callback(false, emptyList(), emptyList())
                 }
             }
         })
@@ -148,7 +159,7 @@ class AiEngine {
 
         val builder = MultipartBody.Builder()
             .setType(MultipartBody.FORM)
-            .addFormDataPart("model", "whisper-large-v3-turbo")
+            .addFormDataPart("model", currentGroqAsrModel) // 🌟 核心破壁：接通动态选择的语音模型
             .addFormDataPart("language", apiLangCode) // 👈 使用处理过的 apiLangCode
             .addFormDataPart("file", "audio.wav", wavBytes.toRequestBody("audio/wav".toMediaType()))
 

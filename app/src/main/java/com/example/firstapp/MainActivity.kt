@@ -777,6 +777,7 @@ class MainActivity : AppCompatActivity() {
         addTitle("🔑 Groq API Key【🌐 前往官网获取】", "https://console.groq.com/keys", engineCard)
         val etGroq = addInput("gsk_...", aiEngine.groqApiKey, engineCard)
 
+        // --- 开始：增强版 Groq 引擎面板 ---
         addTitle("🧠 Groq 主力引擎", null, engineCard)
         val spGroqModel = Spinner(context).apply {
             val initList = mutableListOf(aiEngine.currentGroqModel)
@@ -784,6 +785,15 @@ class MainActivity : AppCompatActivity() {
             background = GradientDrawable().apply { setColor(Color.parseColor("#0F0F0F")); setStroke(2, Color.DKGRAY); cornerRadius = 15f }
         }
         engineCard.addView(spGroqModel)
+
+        // 🌟 新增：Groq 专属语音识别下拉框
+        addTitle("🎙️ Groq 语音识别模型", null, engineCard)
+        val spGroqAsrModel = Spinner(context).apply {
+            val initList = mutableListOf(aiEngine.currentGroqAsrModel)
+            adapter = createModelAdapter(initList)
+            background = GradientDrawable().apply { setColor(Color.parseColor("#0F0F0F")); setStroke(2, Color.DKGRAY); cornerRadius = 15f }
+        }
+        engineCard.addView(spGroqAsrModel)
 
         val btnFetchModels = Button(context).apply {
             text = "🔄 联网拉取Groq最新模型"
@@ -794,15 +804,31 @@ class MainActivity : AppCompatActivity() {
                 this.text = "拉取中..."
                 this.isEnabled = false
                 aiEngine.groqApiKey = etGroq.text.toString().trim()
-                aiEngine.fetchGroqModels { success, models ->
+
+                // 🌟 核心：一键拉取，双向分发！
+                aiEngine.fetchGroqModels { success, textModels, asrModels ->
                     if (isDestroyed || isFinishing) return@fetchGroqModels
                     this.text = "🔄 联网拉取Groq最新模型"
                     this.isEnabled = true
-                    if (success && models.isNotEmpty()) {
-                        spGroqModel.adapter = createModelAdapter(models)
-                        val targetIndex = models.indexOfFirst { it.contains("qwen", ignoreCase = true) }.takeIf { it >= 0 } ?: 0
+
+                    if (success && textModels.isNotEmpty()) {
+                        // 1. 刷新文本大模型下拉框
+                        spGroqModel.adapter = createModelAdapter(textModels)
+                        val targetIndex = textModels.indexOfFirst { it.contains("qwen", ignoreCase = true) }.takeIf { it >= 0 } ?: 0
                         spGroqModel.setSelection(targetIndex)
-                        Toast.makeText(context, "Groq模型库已更新！", Toast.LENGTH_SHORT).show()
+
+                        // 2. 刷新语音大模型下拉框
+                        if (asrModels.isNotEmpty()) {
+                            spGroqAsrModel.adapter = createModelAdapter(asrModels)
+                            // 默认先找满血版 v3，找不到就选 turbo，再找不到选第一个
+                            val asrTargetIndex = asrModels.indexOfFirst { it == "whisper-large-v3" }
+                                .takeIf { it >= 0 }
+                                ?: asrModels.indexOfFirst { it == "whisper-large-v3-turbo" }.takeIf { it >= 0 }
+                                ?: 0
+                            spGroqAsrModel.setSelection(asrTargetIndex)
+                        }
+
+                        Toast.makeText(context, "Groq 模型库与语音库已更新！", Toast.LENGTH_SHORT).show()
                     } else {
                         Toast.makeText(context, "拉取失败，请检查 Key 或网络", Toast.LENGTH_SHORT).show()
                     }
@@ -810,6 +836,7 @@ class MainActivity : AppCompatActivity() {
             }
         }
         engineCard.addView(btnFetchModels)
+        // --- 结束：增强版 Groq 引擎面板 ---
 
         addTitle("🔑 Gemini API Key【🌐 前往官网获取】", "https://aistudio.google.com/app/apikey", engineCard)
         val etGemini = addInput("AIzaSy...", aiEngine.geminiApiKey, engineCard)
@@ -986,6 +1013,7 @@ class MainActivity : AppCompatActivity() {
                 val editor = sharedPrefs.edit()
                 editor.putString("groq_key", etGroq.text.toString().trim())
                 editor.putString("groq_model", spGroqModel.selectedItem?.toString() ?: "qwen/qwen3-32b")
+                editor.putString("groq_asr_model", spGroqAsrModel.selectedItem?.toString() ?: "whisper-large-v3")
                 editor.putString("gemini_key", etGemini.text.toString().trim())
                 editor.putString("gemini_model", spGeminiModel.selectedItem?.toString() ?: "gemini-3.1-flash-lite")
 
@@ -1511,6 +1539,7 @@ class MainActivity : AppCompatActivity() {
     private fun loadSettings() {
         aiEngine.groqApiKey = sharedPrefs.getString("groq_key", "") ?: ""
         aiEngine.currentGroqModel = sharedPrefs.getString("groq_model", "qwen/qwen3-32b") ?: "qwen/qwen3-32b"
+        aiEngine.currentGroqAsrModel = sharedPrefs.getString("groq_asr_model", "whisper-large-v3") ?: "whisper-large-v3"
         aiEngine.geminiApiKey = sharedPrefs.getString("gemini_key", "") ?: ""
         aiEngine.currentGeminiModel = sharedPrefs.getString("gemini_model", "gemini-3.1-flash-lite") ?: "gemini-3.1-flash-lite"
         myLangName = sharedPrefs.getString("lang_me", "中文") ?: "中文"
@@ -2710,20 +2739,58 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun processImportedFile(uri: android.net.Uri) {
-        try {
-            val inputStream = contentResolver.openInputStream(uri)
-            val jsonStr = inputStream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() } ?: ""
-            val importedArray = org.json.JSONArray(jsonStr)
+        setIslandState("⏳ 正在读取备份...", "#00BCFF")
 
-            if (importedArray.length() == 0) {
-                Toast.makeText(this, "⚠️ 导入中止：该备份文件内容为空", Toast.LENGTH_SHORT).show()
-                return
+        // 🛡️ 航天级防御 3：强制在子线程执行 I/O 读取，彻底告别主线程 ANR 崩溃
+        Thread {
+            try {
+                // 🛡️ 航天级防御 1.1：前置体积侦测。超大文件直接阻断，不给它吃内存的机会
+                var fileSize = 0L
+                contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                    val sizeIndex = cursor.getColumnIndex(android.provider.OpenableColumns.SIZE)
+                    if (cursor.moveToFirst() && sizeIndex != -1) {
+                        fileSize = cursor.getLong(sizeIndex)
+                    }
+                }
+
+                // 限制最大体积为 2MB (正常的 JSON 文本几百KB就顶天了)
+                if (fileSize > 2 * 1024 * 1024) {
+                    runOnUiThread {
+                        Toast.makeText(this@MainActivity, "⚠️ 文件过大，拒绝读取！请选择正确的 KANE 备份文件", Toast.LENGTH_LONG).show()
+                        resetIslandDelayed()
+                    }
+                    return@Thread
+                }
+
+                // 安全读取流
+                val inputStream = contentResolver.openInputStream(uri)
+                val jsonStr = inputStream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() } ?: ""
+
+                // 验证 JSON 数组
+                val importedArray = org.json.JSONArray(jsonStr)
+
+                if (importedArray.length() == 0) {
+                    runOnUiThread {
+                        Toast.makeText(this@MainActivity, "⚠️ 导入中止：该备份文件内容为空", Toast.LENGTH_SHORT).show()
+                        resetIslandDelayed()
+                    }
+                    return@Thread
+                }
+
+                // 读取成功后，切回主线程展示策略选择弹窗
+                runOnUiThread {
+                    resetIslandDelayed()
+                    showImportStrategyDialog(importedArray)
+                }
+
+            } catch (e: Throwable) {
+                // 🛡️ 航天级防御 1.2：将 Exception 改为 Throwable，连 OOM 这种 Error 也能拦截死，保全 APP 命脉
+                runOnUiThread {
+                    Toast.makeText(this@MainActivity, "⚠️ 文件格式损坏或非标准 JSON 备份，解析失败", Toast.LENGTH_LONG).show()
+                    resetIslandDelayed()
+                }
             }
-            showImportStrategyDialog(importedArray)
-        } catch (e: Exception) {
-            // 🛡️ 航天级防御：文件破损或格式非 JSON，直接温柔拦截，不崩溃
-            Toast.makeText(this, "⚠️ 文件解析失败，请确保您选择的是正确的 KANE 备份文件", Toast.LENGTH_LONG).show()
-        }
+        }.start()
     }
 
     private fun showImportStrategyDialog(importedArray: org.json.JSONArray) {
@@ -2742,64 +2809,73 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun executeImportStrategy(importedArray: org.json.JSONArray, strategy: Int) {
-        val currentArray = getNotebookData()
-        val newArray = org.json.JSONArray()
-        val formatter = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.getDefault())
+        // 🛡️ 航天级防御 2.1：给整个运算逻辑穿上 try-catch 防弹衣
+        try {
+            val currentArray = getNotebookData()
+            val newArray = org.json.JSONArray()
+            val formatter = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.getDefault())
 
-        // 安全解析时间戳的辅助器
-        fun parseTimeSafe(timeStr: String): Long {
-            if (timeStr == "刚刚") return System.currentTimeMillis()
-            return try { formatter.parse(timeStr)?.time ?: 0L } catch (e: Exception) { 0L }
-        }
+            fun parseTimeSafe(timeStr: String): Long {
+                if (timeStr == "刚刚") return System.currentTimeMillis()
+                return try { formatter.parse(timeStr)?.time ?: 0L } catch (e: Exception) { 0L }
+            }
 
-        when (strategy) {
-            0 -> { // 🧠 智能合并
-                val mergedMap = mutableMapOf<String, org.json.JSONObject>()
-                // 1. 先把本地的装进 Map
-                for (i in 0 until currentArray.length()) {
-                    val item = currentArray.getJSONObject(i)
-                    mergedMap[item.optString("id")] = item
+            when (strategy) {
+                0 -> { // 🧠 智能合并
+                    val mergedMap = mutableMapOf<String, org.json.JSONObject>()
+                    // 读取本地
+                    for (i in 0 until currentArray.length()) {
+                        // 🛡️ 航天级防御 2.2：使用 optJSONObject 替代 getJSONObject，如果不是对象直接跳过，绝不报错
+                        val item = currentArray.optJSONObject(i) ?: continue
+                        mergedMap[item.optString("id")] = item
+                    }
+                    // 比对导入
+                    for (i in 0 until importedArray.length()) {
+                        val importedItem = importedArray.optJSONObject(i) ?: continue
+                        val id = importedItem.optString("id")
+                        if (id.isEmpty()) continue // 过滤掉没有 ID 的非法数据
+
+                        if (mergedMap.containsKey(id)) {
+                            val localTime = parseTimeSafe(mergedMap[id]!!.optString("timestamp", ""))
+                            val importTime = parseTimeSafe(importedItem.optString("timestamp", ""))
+                            if (importTime > localTime) mergedMap[id] = importedItem
+                        } else {
+                            mergedMap[id] = importedItem
+                        }
+                    }
+                    val sortedList = mergedMap.values.toList().sortedByDescending { parseTimeSafe(it.optString("timestamp", "")) }
+                    for (item in sortedList) newArray.put(item)
                 }
-                // 2. 拿导入的比对
-                for (i in 0 until importedArray.length()) {
-                    val importedItem = importedArray.getJSONObject(i)
-                    val id = importedItem.optString("id")
-                    if (mergedMap.containsKey(id)) {
-                        val localTime = parseTimeSafe(mergedMap[id]!!.optString("timestamp", ""))
-                        val importTime = parseTimeSafe(importedItem.optString("timestamp", ""))
-                        // 如果导入的文件比较新，就干掉本地的，覆盖它！
-                        if (importTime > localTime) mergedMap[id] = importedItem
-                    } else {
-                        // 本地没有的新笔记，无条件加入
-                        mergedMap[id] = importedItem
+                1 -> { // 💥 强制覆盖
+                    for (i in 0 until importedArray.length()) {
+                        val item = importedArray.optJSONObject(i) ?: continue
+                        newArray.put(item)
                     }
                 }
-                // 3. 按照时间重新洗牌（最新的在最上面）
-                val sortedList = mergedMap.values.toList().sortedByDescending { parseTimeSafe(it.optString("timestamp", "")) }
-                for (item in sortedList) newArray.put(item)
-            }
-            1 -> { // 💥 强制覆盖
-                for (i in 0 until importedArray.length()) newArray.put(importedArray.getJSONObject(i))
-            }
-            2 -> { // ➕ 全部追加
-                // 先放旧的，再放新导入的
-                for (i in 0 until currentArray.length()) newArray.put(currentArray.getJSONObject(i))
-                for (i in 0 until importedArray.length()) {
-                    val item = importedArray.getJSONObject(i)
-                    // 🛡️ 防御：既然是追加，强制刷新所有导入的 ID，杜绝日后修改时发生 ID 撞车
-                    item.put("id", java.util.UUID.randomUUID().toString())
-                    newArray.put(item)
+                2 -> { // ➕ 全部追加
+                    for (i in 0 until currentArray.length()) {
+                        val item = currentArray.optJSONObject(i) ?: continue
+                        newArray.put(item)
+                    }
+                    for (i in 0 until importedArray.length()) {
+                        val item = importedArray.optJSONObject(i) ?: continue
+                        item.put("id", java.util.UUID.randomUUID().toString())
+                        newArray.put(item)
+                    }
                 }
             }
+
+            // 数据落盘
+            sharedPrefs.edit().putString("kane_notebook_data", newArray.toString()).apply()
+            triggerVibration(50)
+            Toast.makeText(this, "🎉 笔记导入成功！", Toast.LENGTH_SHORT).show()
+
+            activeNotebookCallback?.let { showNotebookSubDialog(it) }
+
+        } catch (e: Exception) {
+            // 🛡️ 终极兜底：如果有任何未知的格式问题，阻断崩溃，友善提示用户
+            Toast.makeText(this, "⚠️ 数据清洗失败，备份文件中可能包含不合规的幽灵数据", Toast.LENGTH_LONG).show()
         }
-
-        // 写入硬盘
-        sharedPrefs.edit().putString("kane_notebook_data", newArray.toString()).apply()
-        triggerVibration(50)
-        Toast.makeText(this, "🎉 笔记导入成功！", Toast.LENGTH_SHORT).show()
-
-        // 🌟 核心：无缝衔接！利用记忆器，瞬间重新弹出刷新后的笔记本！
-        activeNotebookCallback?.let { showNotebookSubDialog(it) }
     }
 
     private fun showNotebookSubDialog(onItemClicked: (String) -> Unit) {
@@ -2865,8 +2941,13 @@ class MainActivity : AppCompatActivity() {
                 popup.setOnMenuItemClickListener { menuItem ->
                     when (menuItem.itemId) {
                         1 -> { // 导入
-                            dialog?.dismiss() // 释放生命周期，直接拉起文件选择器
-                            importNotebookLauncher.launch("*/*")
+                            dialog?.dismiss() // 先释放当前弹窗
+                            try {
+                                importNotebookLauncher.launch("*/*")
+                            } catch (e: Exception) {
+                                // 🛡️ 航天级防御 4：捕获部分精简版系统没有文件管理器的异常
+                                Toast.makeText(context, "⚠️ 无法拉起文件管理器，请确保您的手机安装了文件浏览应用", Toast.LENGTH_LONG).show()
+                            }
                             true
                         }
                         2 -> { // 导出
