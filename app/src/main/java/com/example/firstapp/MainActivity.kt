@@ -132,7 +132,7 @@ class MainActivity : AppCompatActivity() {
         // ... 下面的代码保持不变
 
         sharedPrefs = getSharedPreferences("KaneAiPrefs", Context.MODE_PRIVATE)
-        val defaultKillers = setOf("字幕", "谢谢观看", "点个赞", "Mingjing", "Subscribe", "watching")
+        val defaultKillers = setOf("字幕", "谢谢观看", "点个赞", "Mingjing", "Subscribe", "watching","请不吝点赞 订阅 转发 打赏支持明镜与点点栏目")
         killerSet = sharedPrefs.getStringSet("killer_list", defaultKillers)?.toMutableSet() ?: mutableSetOf()
 
         vibrator = getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
@@ -377,8 +377,24 @@ class MainActivity : AppCompatActivity() {
             onPlayClick = onPlayClickAction,
             onEditClick = onEditClickAction // 👈 传入动作
         )
+        // 🌟 读取历史保存的光效偏好，并下发给适配器
+        val savedEffect = sharedPrefs.getString("chat_effect_mode", "A") ?: "A"
+        topAdapter.effectMode = savedEffect
+        bottomAdapter.effectMode = savedEffect
 
-        rvTopChat.layoutManager = LinearLayoutManager(this).apply { stackFromEnd = true }
+        // 🌟 灵动岛长按彩蛋：呼出光效切换面板
+        tvDynamicIsland.setOnLongClickListener {
+            triggerVibration(50)
+            showEffectSelectionDialog()
+            true // 消费事件，防止触发其他冲突
+        }
+
+        // 🌟 核心破局点：给底部增加一条半个屏幕长的“透明虚拟跑道”
+        // 这样安卓系统就会认为“内容很长”，从而允许我们将新气泡强制拉到灵动岛，顺理成章地把旧气泡挤出画外！
+        rvTopChat.layoutManager = LinearLayoutManager(this)
+        rvTopChat.setPadding(rvTopChat.paddingLeft, rvTopChat.paddingTop, rvTopChat.paddingRight, resources.displayMetrics.heightPixels / 2)
+        rvTopChat.clipToPadding = false // 确保跑道透明
+
         rvBottomChat.layoutManager = LinearLayoutManager(this).apply { stackFromEnd = true }
         rvTopChat.adapter = topAdapter
         rvBottomChat.adapter = bottomAdapter
@@ -414,8 +430,7 @@ class MainActivity : AppCompatActivity() {
                 triggerVibration(20)
                 applyChatFontSize(chatTransSize + 2f, chatOrigSize + 2f)
             } else {
-                setIslandState("⚠️ 已经是最大字号了", "#FFA500", isTop = false)
-                resetIslandDelayed()
+                showTransientIslandMessage("⚠️ 已经是最大字号了", "#FFA500", isTop = false)
             }
         }
 
@@ -424,16 +439,14 @@ class MainActivity : AppCompatActivity() {
                 triggerVibration(20)
                 applyChatFontSize(chatTransSize - 2f, chatOrigSize - 2f)
             } else {
-                setIslandState("⚠️ 已经是最小字号了", "#FFA500", isTop = false)
-                resetIslandDelayed()
+                showTransientIslandMessage("⚠️ 已经是最小字号了", "#FFA500", isTop = false)
             }
         }
 
         btnFontReset.setOnClickListener {
             triggerVibration(40)
             applyChatFontSize(20f, 14f)
-            setIslandState("✅ 恢复默认排版", "#00FF00", isTop = false)
-            resetIslandDelayed()
+            showTransientIslandMessage("✅ 恢复默认排版", "#00FF00", isTop = false)
         }
 
         btnMainCamera = findViewById(R.id.btn_main_camera)
@@ -520,29 +533,25 @@ class MainActivity : AppCompatActivity() {
             }
 
             triggerVibration(50)
-            setIslandState("🔄 双方语种已互换", "#00BCFF")
-            resetIslandDelayed()
+            showTransientIslandMessage("🔄 双方语种已互换", "#00BCFF")
         }
 
         btnClear.setOnClickListener {
             if (topAdapter.itemCount > 0 || bottomAdapter.itemCount > 0) {
                 val clearDialog = AlertDialog.Builder(this)
-                    .setCustomTitle(createCyberTitle("🧹 一键清屏"))
-                    .setMessage("确定要清空当前的对话记录吗？")
+                    // ...
                     .setPositiveButton("清空") { _, _ ->
                         topAdapter.clearMessages()
                         bottomAdapter.clearMessages()
 
                         triggerVibration(50)
-                        setIslandState("✨ 已清屏", "#00FF00")
-                        resetIslandDelayed()
+                        showTransientIslandMessage("✨ 已清屏", "#00FF00")
                     }
                     .setNegativeButton("取消", null)
                     .create()
                 if (!isFinishing && !isDestroyed) clearDialog.show()
             } else {
-                setIslandState("✨ 屏幕已经是干净的啦", "#00FF00")
-                resetIslandDelayed()
+                showTransientIslandMessage("✨ 屏幕已经是干净的啦", "#00FF00")
             }
         }
 
@@ -1030,8 +1039,7 @@ class MainActivity : AppCompatActivity() {
                 editor.apply()
 
                 loadSettings()
-                setIslandState("✅ 设置已保存", "#00FF00")
-                resetIslandDelayed()
+                showTransientIslandMessage("✅ 设置已保存", "#00FF00")
             }
             .setNegativeButton("取消", null)
             .create()
@@ -1114,7 +1122,7 @@ class MainActivity : AppCompatActivity() {
 
         // 署名留白区
         val tvFooter = TextView(context).apply {
-            text = "Designed & Developed by KANE\nVer v5.1.5 Pro"
+            text = "Designed & Developed by KANE\nVer v5.1.6 Pro"
             setTextColor(Color.parseColor("#666666"))
             textSize = 12f
             gravity = android.view.Gravity.CENTER
@@ -1602,7 +1610,7 @@ class MainActivity : AppCompatActivity() {
                 if (keyword.isNotEmpty()) {
                     killerSet.add(keyword)
                     sharedPrefs.edit().putStringSet("killer_list", killerSet).apply()
-                    setIslandState("🎯 规则已生效", "#FF4444")
+                    showTransientIslandMessage("🎯 规则已生效", "#FF4444")
                     resetIslandDelayed()
                 }
             }
@@ -1739,10 +1747,10 @@ class MainActivity : AppCompatActivity() {
         btnReset.setOnClickListener {
             val resetConfirmDialog = AlertDialog.Builder(context)
                 .setTitle("⚠️ 紧急洗牌")
-                .setMessage("确定要清空所有自定义规则，并恢复系统默认的 6 个底层规则吗？\n(这将会清除你此前手动添加的所有黑名单)")
+                .setMessage("确定要清空所有自定义规则，并恢复系统默认的 7 个底层规则吗？\n(这将会清除你此前手动添加的所有黑名单)")
                 .setPositiveButton("确定恢复") { _, _ ->
                     killerSet.clear()
-                    killerSet.addAll(setOf("字幕", "谢谢观看", "点个赞", "mingjing", "subscribe", "watching"))
+                    killerSet.addAll(setOf("字幕", "谢谢观看", "点个赞", "mingjing", "subscribe", "watching","请不吝点赞 订阅 转发 打赏支持明镜与点点栏目"))
                     sharedPrefs.edit().putStringSet("killer_list", killerSet).apply()
                     renderList()
                     triggerVibration(50)
@@ -1964,9 +1972,7 @@ class MainActivity : AppCompatActivity() {
         clipboard.setPrimaryClip(clip)
 
         triggerVibration(50)
-        Toast.makeText(this, "✅ $label 已复制", Toast.LENGTH_SHORT).show()
-        setIslandState("✅ 复制成功", "#00FF00")
-        resetIslandDelayed()
+        showTransientIslandMessage("✅ $label 已复制", "#00FF00")
     }
 
     private fun isHallucination(text: String): Boolean {
@@ -2043,22 +2049,11 @@ class MainActivity : AppCompatActivity() {
                 bottomAdapter.addMessage(ChatMessage(translated, text, isMe = !isTop, voiceId = voiceId, isTopSpeaker = isTop, id = msgId))
 
                 rvTopChat.post {
+                    // 🌟 终极物理法则：新气泡从听筒冒出后，强制吸附到 START（逻辑顶部 = 物理的灵动岛）
+                    // 配合刚才铺设的虚拟跑道，旧气泡会被毫无阻碍地挤过中轴线，消失在画外！
                     val topScroller = object : androidx.recyclerview.widget.LinearSmoothScroller(this@MainActivity) {
-                        override fun calculateDyToMakeVisible(view: View, snapPreference: Int): Int {
-                            val layoutManager = layoutManager ?: return 0
-                            val params = view.layoutParams as RecyclerView.LayoutParams
-                            val viewTop = layoutManager.getDecoratedTop(view) - params.topMargin
-                            val viewBottom = layoutManager.getDecoratedBottom(view) + params.bottomMargin
-                            val rvTop = layoutManager.paddingTop
-                            val rvBottom = layoutManager.height - layoutManager.paddingBottom
-
-                            val viewHeight = viewBottom - viewTop
-                            val rvHeight = rvBottom - rvTop
-
-                            if (viewHeight > rvHeight || viewTop < rvTop) {
-                                return rvTop - viewTop
-                            }
-                            return super.calculateDyToMakeVisible(view, snapPreference)
+                        override fun getVerticalSnapPreference(): Int {
+                            return SNAP_TO_START
                         }
                     }
                     topScroller.targetPosition = topAdapter.itemCount - 1
@@ -2163,6 +2158,18 @@ class MainActivity : AppCompatActivity() {
         setIslandState("🌤️ 随处心安，沟通无界", "#00FF00", animatePop = false, isTop = false)
         tvDynamicIsland.setOnClickListener(null)
         tvDynamicIsland.isClickable = false
+    }
+    // 👇 🌟 新增：智能降级展示方法。专门保护 TTS 停止按钮不被低优消息刷掉！
+    private fun showTransientIslandMessage(text: String, colorStr: String, isTop: Boolean? = null) {
+        // 如果 TTS 引擎正在发声，或者灵动岛已经被挂载了“停止按钮”（isClickable 为 true）
+        if (edgeTts.isSpeaking || tvDynamicIsland.isClickable) {
+            // 降级为原生 Toast 提示，绝对不触碰灵动岛
+            Toast.makeText(this, text, Toast.LENGTH_SHORT).show()
+        } else {
+            // 闲置状态，允许华丽地展示在灵动岛上
+            setIslandState(text, colorStr, animatePop = true, isTop = isTop)
+            resetIslandDelayed()
+        }
     }
 
     @SuppressLint("ClickableViewAccessibility")
@@ -3225,6 +3232,38 @@ class MainActivity : AppCompatActivity() {
     private fun getSmartVoiceId(voiceName: String, langName: String): String {
         // 废弃之前的身份证掉包逻辑，直接返回原始西里尔 ID，彻底消灭 500 崩溃
         return AppConstants.TTS_VOICES[voiceName] ?: "zh-CN-XiaoxiaoNeural"
+    }
+    private fun showEffectSelectionDialog() {
+        // 读取当前模式，用于在菜单里打上“当前生效”的标记
+        val currentMode = sharedPrefs.getString("chat_effect_mode", "A") ?: "A"
+
+        val options = arrayOf(
+            "✨ A：流光溢彩 " + if (currentMode == "A") "   👈 当前" else "",
+            "⚡  B：核心强脉冲 " + if (currentMode == "B") "   👈 当前" else "",
+            "🌊 C：微波涟漪 " + if (currentMode == "C") "   👈 当前" else "",
+            "🚫 关闭特效" + if (currentMode == "NONE") "   👈 当前" else ""
+        )
+        val modes = arrayOf("A", "B", "C", "NONE")
+
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(this)
+            .setCustomTitle(createCyberTitle("🎨 气泡特效"))
+            .setItems(options) { _, which ->
+                val selectedMode = modes[which]
+
+                // 1. 保存到记忆体
+                sharedPrefs.edit().putString("chat_effect_mode", selectedMode).apply()
+
+                // 2. 实时下发给两个适配器
+                topAdapter.effectMode = selectedMode
+                bottomAdapter.effectMode = selectedMode
+
+                triggerVibration(40)
+                // 3. 利用我们之前写的“降级通知”方法，优雅提示
+                showTransientIslandMessage("✅ 唤醒特效已切换", "#00E676")
+            }
+            .create()
+
+        if (!isFinishing && !isDestroyed) dialog.show()
     }
     private fun showClearNotebookConfirmDialog(onCleared: () -> Unit) {
         androidx.appcompat.app.AlertDialog.Builder(this)
