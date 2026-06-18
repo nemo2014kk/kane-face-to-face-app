@@ -1,5 +1,5 @@
 <!-- 基础信息行 -->
-![Release](https://img.shields.io/badge/release-v5.1.5-green.svg)
+![Release](https://img.shields.io/badge/release-v5.1.6-green.svg)
 ![Platform](https://img.shields.io/badge/Platform-Android_9.0%2B_%28API_28%2B%29-3DDC84.svg?logo=android&logoColor=white)
 ![Language](https://img.shields.io/badge/Language-Kotlin-7F52FF.svg?logo=kotlin&logoColor=white)
 ![License](https://img.shields.io/badge/License-MIT-blue.svg)
