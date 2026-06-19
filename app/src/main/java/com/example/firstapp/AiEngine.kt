@@ -82,6 +82,18 @@ class AiEngine {
             }
         })
     }
+    // 🌟 极限提速策略 1：提前握手 (预热连接池)
+    fun prewarmConnections() {
+        Thread {
+            try {
+                // 发送一个无实质内容的 HEAD 请求。
+                // 目的不是为了获取数据，而是为了强行和 Groq 服务器提前完成耗时的 TLS 加密握手。
+                // 握手完成后，这条安全的 HTTP/2 通道会被保存在 OkHttp 的连接池中。
+                // 等用户松开手指真正发送录音时，直接享受 0 毫秒握手的极速通道！
+                client.newCall(Request.Builder().url("https://api.groq.com/").head().build()).execute().close()
+            } catch (e: Exception) {}
+        }.start()
+    }
 
     fun fetchGeminiModels(callback: (Boolean, List<String>) -> Unit) {
         if (geminiApiKey.isBlank()) {
@@ -243,6 +255,10 @@ class AiEngine {
         val json = JSONObject().apply {
             put("model", currentGroqModel)
             put("temperature", 0.1)
+            // ⚡ 黄金平衡点：1024 Tokens
+            // 完美吃下 3 分钟的翻译文本，同时在 Groq 云端依然被判定为"轻量任务"，
+            // 继续享受毫无排队感的极速并发红利！
+            put("max_tokens", 1024)
             put("messages", org.json.JSONArray().put(JSONObject().apply {
                 put("role", "system"); put("content", sysPrompt)
             }).put(JSONObject().apply { put("role", "user"); put("content", text) }))

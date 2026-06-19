@@ -15,7 +15,7 @@ android {
         minSdk = 28
         targetSdk = 36
         versionCode = 5
-        versionName = "5.1.6"// 使用标准版本号格式
+        versionName = "5.2.1"// 使用标准版本号格式
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

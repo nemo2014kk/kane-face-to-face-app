@@ -382,10 +382,10 @@ class MainActivity : AppCompatActivity() {
         topAdapter.effectMode = savedEffect
         bottomAdapter.effectMode = savedEffect
 
-        // 🌟 灵动岛长按彩蛋：呼出光效切换面板
+        // 🌟 灵动岛长按彩蛋：呼出全新的灵动控制台
         tvDynamicIsland.setOnLongClickListener {
             triggerVibration(50)
-            showEffectSelectionDialog()
+            showQuickControlPanel() // 👈 这里改成了呼出新面板
             true // 消费事件，防止触发其他冲突
         }
 
@@ -539,7 +539,8 @@ class MainActivity : AppCompatActivity() {
         btnClear.setOnClickListener {
             if (topAdapter.itemCount > 0 || bottomAdapter.itemCount > 0) {
                 val clearDialog = AlertDialog.Builder(this)
-                    // ...
+                    .setCustomTitle(createCyberTitle("🧹 一键清屏"))
+                    .setMessage("确定清空屏幕上的所有气泡吗？")
                     .setPositiveButton("清空") { _, _ ->
                         topAdapter.clearMessages()
                         bottomAdapter.clearMessages()
@@ -1123,7 +1124,7 @@ class MainActivity : AppCompatActivity() {
 
         // 署名留白区
         val tvFooter = TextView(context).apply {
-            text = "Designed & Developed by KANE\nVer v5.1.6 Pro"
+            text = "Designed & Developed by KANE\nVer 5.2.1 Pro"
             setTextColor(Color.parseColor("#666666"))
             textSize = 12f
             gravity = android.view.Gravity.CENTER
@@ -2193,6 +2194,7 @@ class MainActivity : AppCompatActivity() {
                         return@setOnTouchListener true
                     }
                     edgeTts.pingServer()
+                    aiEngine.prewarmConnections() // 👈 新增：手指刚按下，就让 AI 引擎在后台去“抢跑”铺路！
 
                     if (edgeTts.isSpeaking) edgeTts.stop()
                     startY = event.y; isCancelled = false; triggerVibration(50)
@@ -3234,34 +3236,192 @@ class MainActivity : AppCompatActivity() {
         // 废弃之前的身份证掉包逻辑，直接返回原始西里尔 ID，彻底消灭 500 崩溃
         return AppConstants.TTS_VOICES[voiceName] ?: "zh-CN-XiaoxiaoNeural"
     }
-    private fun showEffectSelectionDialog() {
-        // 读取当前模式，用于在菜单里打上“当前生效”的标记
-        val currentMode = sharedPrefs.getString("chat_effect_mode", "A") ?: "A"
+    private fun showQuickControlPanel() {
+        val context = this
+        val layout = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(60, 50, 60, 50)
+            setBackgroundColor(Color.parseColor("#1A1A1B")) // 赛博朋克深黑背景
+        }
 
-        val options = arrayOf(
-            "✨ A：流光溢彩 " + if (currentMode == "A") "   👈 当前" else "",
-            "⚡  B：核心强脉冲 " + if (currentMode == "B") "   👈 当前" else "",
-            "🌊 C：微波涟漪 " + if (currentMode == "C") "   👈 当前" else "",
-            "🚫 关闭特效" + if (currentMode == "NONE") "   👈 当前" else ""
-        )
-        val modes = arrayOf("A", "B", "C", "NONE")
-
-        val dialog = androidx.appcompat.app.AlertDialog.Builder(this)
-            .setCustomTitle(createCyberTitle("🎨 气泡特效"))
-            .setItems(options) { _, which ->
-                val selectedMode = modes[which]
-
-                // 1. 保存到记忆体
-                sharedPrefs.edit().putString("chat_effect_mode", selectedMode).apply()
-
-                // 2. 实时下发给两个适配器
-                topAdapter.effectMode = selectedMode
-                bottomAdapter.effectMode = selectedMode
-
-                triggerVibration(40)
-                // 3. 利用我们之前写的“降级通知”方法，优雅提示
-                showTransientIslandMessage("✅ 唤醒特效已切换", "#00E676")
+        // ==========================================
+        // 模块 1：TTS 语音自动播报快捷开关
+        // ==========================================
+        val ttsCard = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
+            setPadding(40, 40, 40, 40)
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+                bottomMargin = 50
             }
+        }
+
+        val tvTtsIcon = TextView(context).apply {
+            textSize = 26f
+            setPadding(0, 0, 30, 0)
+        }
+
+        val tvTtsText = TextView(context).apply {
+            textSize = 15f
+            setTypeface(null, android.graphics.Typeface.BOLD)
+        }
+
+        ttsCard.addView(tvTtsIcon)
+        ttsCard.addView(tvTtsText)
+        layout.addView(ttsCard)
+
+        // 定义一个内部函数，用于刷新 TTS 开关的 UI 状态
+        fun updateTtsUi() {
+            if (isTtsEnabled) {
+                tvTtsIcon.text = "🔊"
+                tvTtsText.text = "自动语音播报：已开启"
+                tvTtsText.setTextColor(Color.parseColor("#00E676")) // 亮绿色
+                ttsCard.background = GradientDrawable().apply {
+                    setColor(Color.parseColor("#121212"))
+                    setStroke(3, Color.parseColor("#00E676"))
+                    cornerRadius = 25f
+                }
+            } else {
+                tvTtsIcon.text = "🔇"
+                tvTtsText.text = "自动语音播报：已静音"
+                tvTtsText.setTextColor(Color.parseColor("#888888")) // 暗灰色
+                ttsCard.background = GradientDrawable().apply {
+                    setColor(Color.parseColor("#252526"))
+                    setStroke(3, Color.parseColor("#444444"))
+                    cornerRadius = 25f
+                }
+            }
+        }
+        updateTtsUi() // 初始化时刷一次状态
+
+        // 点击卡片直接切换开关，不需要关闭弹窗
+        ttsCard.setOnClickListener {
+            triggerVibration(40)
+            isTtsEnabled = !isTtsEnabled // 翻转状态
+            // 实时写入记忆体
+            sharedPrefs.edit().putBoolean("tts_enabled", isTtsEnabled).apply()
+            // 刷新面板 UI
+            updateTtsUi()
+            // 灵动岛顶部提示
+            val msg = if (isTtsEnabled) "✅ 语音播报已开启" else "🔇 语音播报已静音"
+            val color = if (isTtsEnabled) "#00E676" else "#888888"
+            showTransientIslandMessage(msg, color)
+        }
+
+        // ==========================================
+        // 模块 2：气泡视觉特效矩阵式选择器
+        // ==========================================
+        val tvEffectLabel = TextView(context).apply {
+            text = "🎨 气泡视觉特效："
+            setTextColor(Color.parseColor("#BBBBBB"))
+            textSize = 13f
+            setPadding(0, 0, 0, 20)
+        }
+        layout.addView(tvEffectLabel)
+
+        val effectRow = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+        }
+
+        val effects = listOf(
+            Triple("A", "✨", "流光"),
+            Triple("B", "⚡", "脉冲"),
+            Triple("C", "🌊", "涟漪"),
+            Triple("NONE", "🚫", "关闭")
+        )
+
+        var currentMode = sharedPrefs.getString("chat_effect_mode", "A") ?: "A"
+        val effectButtons = mutableListOf<LinearLayout>()
+
+        // 定义一个内部函数，用于刷新四个特效按钮的高亮状态
+        fun updateEffectUi() {
+            for (i in effects.indices) {
+                val mode = effects[i].first
+                val btn = effectButtons[i]
+                val tvIcon = btn.getChildAt(0) as TextView
+                val tvName = btn.getChildAt(1) as TextView
+
+                if (mode == currentMode) {
+                    // 被选中的按钮：亮蓝边框，文字亮起
+                    btn.background = GradientDrawable().apply {
+                        setColor(Color.parseColor("#222223"))
+                        setStroke(3, Color.parseColor("#00BCFF"))
+                        cornerRadius = 20f
+                    }
+                    tvIcon.alpha = 1f
+                    tvName.setTextColor(Color.WHITE)
+                } else {
+                    // 未被选中的按钮：暗灰边框，文字变暗
+                    btn.background = GradientDrawable().apply {
+                        setColor(Color.parseColor("#121212"))
+                        setStroke(2, Color.parseColor("#333333"))
+                        cornerRadius = 20f
+                    }
+                    tvIcon.alpha = 0.4f
+                    tvName.setTextColor(Color.parseColor("#666666"))
+                }
+            }
+        }
+
+        // 动态生成四个方块按钮
+        for (effect in effects) {
+            val mode = effect.first
+            val icon = effect.second
+            val name = effect.third
+
+            val btnLayout = LinearLayout(context).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = android.view.Gravity.CENTER
+                // 使用 weight=1 平分宽度，除了最后一个外，其余加上右边距
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+                    marginEnd = if (mode != "NONE") 15 else 0
+                }
+                setPadding(0, 30, 0, 30)
+
+                setOnClickListener {
+                    triggerVibration(40)
+                    currentMode = mode
+                    // 保存记忆体
+                    sharedPrefs.edit().putString("chat_effect_mode", mode).apply()
+                    // 实时下发给两个聊天适配器
+                    topAdapter.effectMode = mode
+                    bottomAdapter.effectMode = mode
+                    // 刷新四个按钮状态
+                    updateEffectUi()
+                    showTransientIslandMessage("🎨 特效已切换", "#00BCFF")
+                }
+            }
+
+            val tvIcon = TextView(context).apply {
+                text = icon
+                textSize = 22f
+                gravity = android.view.Gravity.CENTER
+                setPadding(0, 0, 0, 15)
+            }
+            val tvName = TextView(context).apply {
+                text = name
+                textSize = 12f
+                gravity = android.view.Gravity.CENTER
+                setTypeface(null, android.graphics.Typeface.BOLD)
+            }
+
+            btnLayout.addView(tvIcon)
+            btnLayout.addView(tvName)
+            effectButtons.add(btnLayout)
+            effectRow.addView(btnLayout)
+        }
+
+        updateEffectUi() // 初始化时刷一次状态
+        layout.addView(effectRow)
+
+        // ==========================================
+        // 组装并显示最终的 Dialog
+        // ==========================================
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(this)
+            .setCustomTitle(createCyberTitle("⚡ 灵动控制台"))
+            .setView(layout)
+            .setPositiveButton("完成", null)
             .create()
 
         if (!isFinishing && !isDestroyed) dialog.show()

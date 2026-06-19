@@ -43,10 +43,19 @@ class AudioProcessor {
 
         thread {
             val buffer = ByteArray(bufferSize)
+
+            // 🛡️ 黄金平衡点：极限录音时长锁定为 3 分钟 (180秒)
+            // 算法: 采样率(16000) * 采样位数(2 byte) * 时长(180秒) ≈ 5.76 MB
+            // 完美匹配面对面交流的极限场景，彻底杜绝内存溢出
+            val maxBytes = sampleRate * 2 * 180
+
             while (isRecording) {
                 val read = audioRecord?.read(buffer, 0, buffer.size) ?: 0
                 if (read > 0) {
-                    pcmDataStream.write(buffer, 0, read)
+                    // 🛡️ 熔断机制：超过 3 分钟后开启空转保护，不再吃内存
+                    if (pcmDataStream.size() < maxBytes) {
+                        pcmDataStream.write(buffer, 0, read)
+                    }
                 }
             }
         }
