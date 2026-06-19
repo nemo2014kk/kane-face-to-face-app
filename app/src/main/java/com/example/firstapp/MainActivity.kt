@@ -1172,7 +1172,7 @@ class MainActivity : AppCompatActivity() {
 
         // 署名留白区
         val tvFooter = TextView(context).apply {
-            text = "Designed & Developed by KANE\nVer 5.2.1 Pro"
+            text = "Designed & Developed by KANE\nVer 5.3.2 Pro"
             setTextColor(Color.parseColor("#666666"))
             textSize = 12f
             gravity = android.view.Gravity.CENTER
@@ -1347,7 +1347,7 @@ class MainActivity : AppCompatActivity() {
         pendingDraftDialog = currentTextInputDialog
     }
     private fun showTextInputDialog(initialText: String = "") {
-        currentTextInputDialog?.dismiss() // 🌟 每次打开前，先清理旧的弹窗
+        currentTextInputDialog?.dismiss()
 
         val context = this
         val layout = LinearLayout(context).apply {
@@ -1379,7 +1379,6 @@ class MainActivity : AppCompatActivity() {
                 }
             }
 
-            // 🌟 还原为极简标题栏
             val title = TextView(context).apply {
                 text = titleText
                 setTextColor(android.graphics.Color.parseColor(activeColor))
@@ -1568,7 +1567,7 @@ class MainActivity : AppCompatActivity() {
                         val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
                         imm.hideSoftInputFromWindow(et.windowToken, 0)
                     } catch (e: Exception) {}
-                    currentTextInputDialog?.dismiss() // 🌟 使用新变量
+                    currentTextInputDialog?.dismiss()
                     processTextPipeline(input, isTop)
                 }
             }
@@ -1588,14 +1587,13 @@ class MainActivity : AppCompatActivity() {
         layout.addView(topModule.root)
         layout.addView(bottomModule.root)
 
-        // 👇 ================== 🌟 提前布局：全局通用底部控制台 ================== 👇
         val universalControlBar = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = android.view.Gravity.CENTER
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
                 topMargin = 20
             }
-            visibility = View.GONE // 👈 核心修复 1：初始状态必须强行隐藏！
+            visibility = View.GONE
         }
 
         var universalFontSize = 16f
@@ -1634,8 +1632,6 @@ class MainActivity : AppCompatActivity() {
 
                 if (draftText.isNotEmpty()) {
                     triggerVibration(40)
-
-                    // 👇 核心升级：智能获取当前焦点所属的发音人 ID
                     val voiceName = if (isTopActive) ptVoiceName else myVoiceName
                     val langName = if (isTopActive) ptLangName else myLangName
                     val voiceId = getSmartVoiceId(voiceName, langName)
@@ -1645,8 +1641,6 @@ class MainActivity : AppCompatActivity() {
                         imm.hideSoftInputFromWindow(activeModule.et.windowToken, 0)
                     } catch (e: Exception) {}
                     currentTextInputDialog?.hide()
-
-                    // 👇 把 voiceId 一并传给大字报
                     showDraftFullscreenDisplay(draftText, isTopActive, activeColor, voiceId)
                 } else {
                     Toast.makeText(context, "⚠️ 框内还没有文字哦", Toast.LENGTH_SHORT).show()
@@ -1676,7 +1670,6 @@ class MainActivity : AppCompatActivity() {
         universalControlBar.addView(btnUniversalFullscreen)
         universalControlBar.addView(btnUniversalPlus)
         layout.addView(universalControlBar)
-        // 👆 ================== 🌟 结束：全局通用底部控制台 ================== 👆
 
         fun updateSpeakerState(module: ModuleUI, hasFocus: Boolean, currentText: String) {
             if (hasFocus || currentText.isNotEmpty()) module.speakerBtn.visibility = View.VISIBLE
@@ -1684,25 +1677,25 @@ class MainActivity : AppCompatActivity() {
         }
 
         fun switchToTopFocus() {
-            lastActiveInputIsTop = true // 👈 记录焦点为上方
+            lastActiveInputIsTop = true
             topModule.title.text = "✍️ 对方文字输入【 ${ptLangName} 】"
             topModule.inputRow.visibility = View.VISIBLE
             topModule.btnContainer.visibility = View.VISIBLE
             topModule.et.minLines = 12
             bottomModule.inputRow.visibility = View.GONE
             bottomModule.title.text = "👉 点击切换：我方输入【 ${myLangName} 】"
-            universalControlBar.visibility = View.VISIBLE // 👈 核心修复 2：只要展开就显示控制台
+            universalControlBar.visibility = View.VISIBLE
         }
 
         fun switchToBottomFocus() {
-            lastActiveInputIsTop = false // 👈 记录焦点为下方
+            lastActiveInputIsTop = false
             bottomModule.title.text = "✍️ 我方文字输入【 ${myLangName} 】"
             bottomModule.inputRow.visibility = View.VISIBLE
             bottomModule.btnContainer.visibility = View.VISIBLE
             bottomModule.et.minLines = 12
             topModule.inputRow.visibility = View.GONE
             topModule.title.text = "👉 点击切换：对方输入【 ${ptLangName} 】"
-            universalControlBar.visibility = View.VISIBLE // 👈 核心修复 2：只要展开就显示控制台
+            universalControlBar.visibility = View.VISIBLE
         }
 
         fun resetInitialState() {
@@ -1716,7 +1709,7 @@ class MainActivity : AppCompatActivity() {
             bottomModule.btnContainer.visibility = View.GONE
             bottomModule.et.minLines = 2
 
-            universalControlBar.visibility = View.GONE // 👈 核心修复 3：初始状态再次确保隐藏
+            universalControlBar.visibility = View.GONE
         }
 
         fun bindModuleEvents(module: ModuleUI, isTop: Boolean, activeColor: String) {
@@ -1753,7 +1746,6 @@ class MainActivity : AppCompatActivity() {
         bindModuleEvents(topModule, isTop = true, activeColor = "#00BCFF")
         bindModuleEvents(bottomModule, isTop = false, activeColor = "#00E676")
 
-        // 🌟 核心拦截：智能判断当前属于谁的领地，完美实现即点即用！
         if (initialText.isNotEmpty()) {
             if (lastActiveInputIsTop) {
                 topModule.et.setText(initialText)
@@ -1770,8 +1762,14 @@ class MainActivity : AppCompatActivity() {
             resetInitialState()
         }
 
+        // 🌟 核心修复：为弹窗套上滑动外衣，彻底解决安卓键盘挤压遮挡的问题
+        val scrollWrapper = ScrollView(context).apply {
+            addView(layout)
+            isVerticalScrollBarEnabled = false
+        }
+
         currentTextInputDialog = androidx.appcompat.app.AlertDialog.Builder(this)
-            .setView(layout)
+            .setView(scrollWrapper)
             .create()
 
         currentTextInputDialog?.window?.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(Color.TRANSPARENT))
@@ -2419,13 +2417,24 @@ class MainActivity : AppCompatActivity() {
             setStatusBarColor(Color.parseColor("#000000"))
             setToolbarWidgetColor(Color.parseColor("#00E676"))
             setActiveControlsWidgetColor(Color.parseColor("#00E676"))
-            setToolbarTitle("✨ 框选需要破译的文字")
 
-            // 🌟 核心修复 1：解锁自由裁切模式！允许手指直接拖拽线框的四个角和边缘
+            // 🌟 提示文案微调
+            setToolbarTitle("✨ 框选并扶正需要破译的文字")
+
+            // 🌟 解锁自由裁切模式！允许手指直接拖拽线框的四个角和边缘
             setFreeStyleCropEnabled(true)
 
-            // 🌟 核心修复 2：隐藏底部那排没用的比例切换按钮 (1:1, 16:9等)，让界面变成纯粹的 OCR 扫描器
-            setHideBottomControls(true)
+            // 🌟 核心修复 1：将底部控制栏设为显示 (false)！
+            // 这样底部就会出现 uCrop 自带的“旋转”面板，里面包含一个【一键转 90° 的按钮】以及【细微角度调节滑块】
+            setHideBottomControls(false)
+
+            // 🌟 核心修复 2：全面解锁多点触控手势！
+            // 无论用户在底部切换到哪个面板，都可以直接用【两根手指在屏幕上直接旋转和缩放图片】
+            setAllowedGestures(
+                com.yalantis.ucrop.UCropActivity.ALL, // 缩放卡片下的手势：允许全部
+                com.yalantis.ucrop.UCropActivity.ALL, // 旋转卡片下的手势：允许全部
+                com.yalantis.ucrop.UCropActivity.ALL  // 比例卡片下的手势：允许全部
+            )
         }
 
         val uCropIntent = com.yalantis.ucrop.UCrop.of(sourceUri, destUri)
@@ -2477,12 +2486,9 @@ class MainActivity : AppCompatActivity() {
         val layout = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(Color.parseColor("#1A1A1B"))
-            clipChildren = false // 🌟 允许放大的文字冲出边界
+            clipChildren = false
         }
 
-        // ==========================================
-        // 第一排：四键并排控制台 (等比均分宽度)
-        // ==========================================
         val toggleRow = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = android.view.Gravity.CENTER_VERTICAL
@@ -2558,11 +2564,8 @@ class MainActivity : AppCompatActivity() {
         toggleRow.addView(btnSaveNote)
         layout.addView(toggleRow)
 
-        // ==========================================
-        // 🌟 第二排：AR 覆盖层全局缩放控制器 (A- / 100% / A+)
-        // ==========================================
-        var overlayScale = 1.0f // 初始化缩放比例
-        val overlayViews = mutableListOf<TextView>() // 提前声明列表
+        var overlayScale = 1.0f
+        val overlayViews = mutableListOf<TextView>()
 
         val fontControlRow = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -2592,7 +2595,6 @@ class MainActivity : AppCompatActivity() {
         fun applyScaleToOverlays() {
             tvScale.text = "${(overlayScale * 100).toInt()}%"
             for (tv in overlayViews) {
-                // 🌟 使用 scaleX 和 scaleY，让框框像放大镜一样弹出来
                 tv.animate().scaleX(overlayScale).scaleY(overlayScale).setDuration(150).start()
             }
         }
@@ -2605,7 +2607,7 @@ class MainActivity : AppCompatActivity() {
             setTextColor(Color.WHITE)
             setOnClickListener {
                 triggerVibration(30)
-                if (overlayScale > 0.6f) { // 最小缩放到 60%
+                if (overlayScale > 0.6f) {
                     overlayScale -= 0.2f
                     applyScaleToOverlays()
                 } else {
@@ -2622,7 +2624,7 @@ class MainActivity : AppCompatActivity() {
             setTextColor(Color.WHITE)
             setOnClickListener {
                 triggerVibration(30)
-                if (overlayScale < 3.0f) { // 最大放大到 300%
+                if (overlayScale < 3.0f) {
                     overlayScale += 0.2f
                     applyScaleToOverlays()
                 } else {
@@ -2637,12 +2639,9 @@ class MainActivity : AppCompatActivity() {
         fontControlRow.addView(pillGroup)
         layout.addView(fontControlRow)
 
-        // ==========================================
-        // 中间：全屏可滚动 FrameLayout 叠层画布
-        // ==========================================
         val frameLayout = FrameLayout(context).apply {
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-            clipChildren = false // 🌟 允许放大的文字冲出边界
+            clipChildren = false
             clipToPadding = false
         }
 
@@ -2808,28 +2807,26 @@ class MainActivity : AppCompatActivity() {
                 val right = offsetX + (region.xmax / 1000f) * trueImgWidth
                 val bottom = offsetY + (region.ymax / 1000f) * trueImgHeight
 
-                val boxWidth = (right - left).toInt().coerceAtLeast(10)
-                val boxHeight = (bottom - top).toInt().coerceAtLeast(10)
-
                 val tvOverlay = TextView(context).apply {
-                    layoutParams = FrameLayout.LayoutParams(boxWidth, boxHeight).apply {
+                    // 🌟 核心破壁：宽度和高度全都释放为 WRAP_CONTENT！让文字自己决定需要多大空间！
+                    layoutParams = FrameLayout.LayoutParams(
+                        FrameLayout.LayoutParams.WRAP_CONTENT,
+                        FrameLayout.LayoutParams.WRAP_CONTENT
+                    ).apply {
                         leftMargin = left.toInt()
                         topMargin = top.toInt()
                     }
+
+                    // 🌟 物理兜底：将“最小宽度和高度”设定为原文框的尺寸。
+                    // 这样一来，文字短的时候它能完美遮住原文；文字长的时候，它就会像气球一样向右膨胀，绝不切断你的字！
+                    minimumWidth = (right - left).toInt().coerceAtLeast(10)
+                    minimumHeight = (bottom - top).toInt().coerceAtLeast(10)
+
                     gravity = android.view.Gravity.CENTER
 
-                    // 🌟 核心修复 1：去掉所有内边距，把 100% 的空间榨干给文字
-                    setPadding(0, 0, 0, 0)
-
-                    // 🌟 核心修复 2：【绝对不要用 setSingleLine】！而是用这套连招锁死它：
-                    maxLines = 1 // 限制只有一行
-                    setHorizontallyScrolling(false) // 彻底封死它的横向滚动错觉，让引擎认清现实（宽度是有限的）
-                    ellipsize = null // 严禁使用省略号截断，逼迫引擎只能通过“缩小字号”来解决问题
-
-                    // 🌟 核心修复 3：将最小字号下探到极致的 2sp，哪怕是芝麻大小也得给我完整显示出来
-                    androidx.core.widget.TextViewCompat.setAutoSizeTextTypeUniformWithConfiguration(
-                        this, 2, 100, 1, android.util.TypedValue.COMPLEX_UNIT_SP
-                    )
+                    setPadding(12, 6, 12, 6)
+                    textSize = 13f
+                    ellipsize = null // 严禁截断
 
                     setOnClickListener {
                         triggerVibration(40)
@@ -2863,7 +2860,7 @@ class MainActivity : AppCompatActivity() {
 
         val scroll = ScrollView(context).apply {
             addView(frameLayout)
-            clipChildren = false // 🌟 允许放大的文字冲出边界
+            clipChildren = false
             clipToPadding = false
         }
         layout.addView(scroll)
@@ -3453,11 +3450,12 @@ class MainActivity : AppCompatActivity() {
         titleRow.addView(btnMore)
         layout.addView(titleRow)
 
-        // ==========================================
-        // 🌟 核心升级 1：替换为支持物理拖拽的 RecyclerView 引擎
-        // ==========================================
+        // 🌟 核心修复1：动态计算当前设备的高度，限制最大高度为屏幕的 55%，防止在旧手机上越界
+        val screenHeight = android.content.res.Resources.getSystem().displayMetrics.heightPixels
+        val maxRvHeight = (screenHeight * 0.55).toInt()
+
         val rvList = androidx.recyclerview.widget.RecyclerView(context).apply {
-            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, (550 * density).toInt())
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, maxRvHeight)
             layoutManager = androidx.recyclerview.widget.LinearLayoutManager(context)
         }
         layout.addView(rvList)
@@ -3498,17 +3496,11 @@ class MainActivity : AppCompatActivity() {
             sharedPrefs.edit().putString("kane_notebook_data", newArray.toString()).apply()
         }
 
-        // ==========================================
-        // 🌟 核心升级 2：构建专用的适配器 (Adapter)
-        // ==========================================
-        // ==========================================
-        // 🌟 核心升级 2：构建专用的适配器 (带独立菜单按钮)
-        // ==========================================
         class NotebookAdapter : androidx.recyclerview.widget.RecyclerView.Adapter<NotebookAdapter.ViewHolder>() {
             inner class ViewHolder(val view: LinearLayout,
                                    val tvItemTitle: TextView,
                                    val tvItemTime: TextView,
-                                   val btnItemMore: TextView, // 👈 新增：右上角三个小点按钮
+                                   val btnItemMore: TextView,
                                    val tvItemContent: TextView,
                                    val btnEdit: TextView,
                                    val btnSend: TextView) : androidx.recyclerview.widget.RecyclerView.ViewHolder(view)
@@ -3528,7 +3520,7 @@ class MainActivity : AppCompatActivity() {
 
                 val itemTitleRow = LinearLayout(context).apply {
                     orientation = LinearLayout.HORIZONTAL
-                    gravity = android.view.Gravity.CENTER_VERTICAL // 🌟 保证水平居中对齐
+                    gravity = android.view.Gravity.CENTER_VERTICAL
                     layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
                         bottomMargin = (4 * density).toInt()
                     }
@@ -3538,16 +3530,20 @@ class MainActivity : AppCompatActivity() {
                     setTextColor(Color.parseColor("#00E676"))
                     textSize = 15f
                     setTypeface(null, android.graphics.Typeface.BOLD)
-                    layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                    // 🌟 核心修复2：增加右边距 + 强制单行 + 超出显示省略号，彻底杜绝折行覆盖时间戳的问题
+                    layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+                        marginEnd = (10 * density).toInt()
+                    }
+                    maxLines = 1
+                    ellipsize = android.text.TextUtils.TruncateAt.END
                 }
 
                 val tvItemTime = TextView(context).apply {
                     setTextColor(Color.parseColor("#666666"))
                     textSize = 12f
-                    setPadding(0, 0, (10 * density).toInt(), 0) // 🌟 距离右边的小点按钮留点空隙
+                    setPadding(0, 0, (10 * density).toInt(), 0)
                 }
 
-                // 🌟 新增：独立的三点菜单按钮
                 val btnItemMore = TextView(context).apply {
                     text = "⋮"
                     setTextColor(Color.parseColor("#888888"))
@@ -3558,7 +3554,7 @@ class MainActivity : AppCompatActivity() {
 
                 itemTitleRow.addView(tvItemTitle)
                 itemTitleRow.addView(tvItemTime)
-                itemTitleRow.addView(btnItemMore) // 👈 添加到标题行最右侧
+                itemTitleRow.addView(btnItemMore)
 
                 val tvItemContent = TextView(context).apply {
                     setTextColor(Color.parseColor("#AAAAAA"))
@@ -3622,7 +3618,6 @@ class MainActivity : AppCompatActivity() {
                 holder.tvItemTime.text = item.optString("timestamp", "刚刚")
                 holder.tvItemContent.text = content
 
-                // 🌟 点击卡片空白处：智能填入或展开
                 holder.view.setOnClickListener {
                     triggerVibration(30)
                     dialog?.dismiss()
@@ -3633,7 +3628,6 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
 
-                // 🌟 新增：点击右上角三点菜单
                 holder.btnItemMore.setOnClickListener {
                     triggerVibration(30)
                     val options = arrayOf("📋 复制内容", "✏️ 编辑笔记", "❌ 删除条目")
@@ -3651,7 +3645,6 @@ class MainActivity : AppCompatActivity() {
                         }.show()
                 }
 
-                // 卡片底部的独立按钮
                 holder.btnEdit.setOnClickListener {
                     triggerVibration(30)
                     dialog?.dismiss()
@@ -3673,9 +3666,6 @@ class MainActivity : AppCompatActivity() {
         rvList.adapter = adapter
         loadDataFromPrefs()
 
-        // ==========================================
-        // 🌟 核心升级 3：纯净的长按拖拽重排 (剔除松手菜单)
-        // ==========================================
         val itemTouchHelper = androidx.recyclerview.widget.ItemTouchHelper(object : androidx.recyclerview.widget.ItemTouchHelper.Callback() {
             private var dragStartPosition = -1
 
@@ -3709,7 +3699,6 @@ class MainActivity : AppCompatActivity() {
 
             override fun clearView(recyclerView: androidx.recyclerview.widget.RecyclerView, viewHolder: androidx.recyclerview.widget.RecyclerView.ViewHolder) {
                 super.clearView(recyclerView, viewHolder)
-                // 恢复落地后的原始大小和透明度
                 viewHolder.itemView.alpha = 1.0f
                 viewHolder.itemView.scaleX = 1.0f
                 viewHolder.itemView.scaleY = 1.0f
@@ -3717,7 +3706,6 @@ class MainActivity : AppCompatActivity() {
                 val dropPosition = viewHolder.adapterPosition
 
                 if (dropPosition != androidx.recyclerview.widget.RecyclerView.NO_POSITION) {
-                    // 🌟 核心修复：只管排序存储，不再干预点击和长按事件！
                     if (dragStartPosition != dropPosition && dragStartPosition != -1) {
                         saveDataToPrefs()
                         triggerVibration(40)
