@@ -2527,7 +2527,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         val btnCopyAll = TextView(context).apply {
-            text = "📋 复制全文"
+            text = "复制全文"
             textSize = 13f
             maxLines = 1
             gravity = android.view.Gravity.CENTER
@@ -2543,7 +2543,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         val btnSaveNote = TextView(context).apply {
-            text = "📑 存入笔记"
+            text = "存入笔记"
             textSize = 13f
             maxLines = 1
             gravity = android.view.Gravity.CENTER
@@ -2719,7 +2719,7 @@ class MainActivity : AppCompatActivity() {
             if (finalContent.isNotEmpty()) {
                 copyToClipboard(if (isShowingTranslated) "整页译文" else "整页原文", finalContent)
 
-                val originalText = "📋 复制全文"
+                val originalText = "复制全文"
                 val originalBg = btnCopyAll.background
                 btnCopyAll.text = "✅ 复制成功"
                 btnCopyAll.setTextColor(Color.parseColor("#1A1A1B"))
@@ -2771,7 +2771,7 @@ class MainActivity : AppCompatActivity() {
                 for (i in 0 until array.length()) newArray.put(array.getJSONObject(i))
                 sharedPrefs.edit().putString("kane_notebook_data", newArray.toString()).apply()
 
-                val originalText = "📑 存入笔记"
+                val originalText = "存入笔记"
                 val originalBg = btnSaveNote.background
                 btnSaveNote.text = "✅ 已存入"
                 btnSaveNote.setTextColor(Color.parseColor("#1A1A1B"))
@@ -3392,10 +3392,15 @@ class MainActivity : AppCompatActivity() {
         val context = this
         val density = context.resources.displayMetrics.density
 
+        // 🌟 优化：显式指定 root 布局宽度为 MATCH_PARENT
         val layout = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             setPadding((20 * density).toInt(), (15 * density).toInt(), (20 * density).toInt(), (15 * density).toInt())
             setBackgroundColor(Color.parseColor("#1A1A1B"))
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
         }
 
         val titleRow = LinearLayout(context).apply {
@@ -3450,7 +3455,6 @@ class MainActivity : AppCompatActivity() {
         titleRow.addView(btnMore)
         layout.addView(titleRow)
 
-        // 🌟 核心修复1：动态计算当前设备的高度，限制最大高度为屏幕的 55%，防止在旧手机上越界
         val screenHeight = android.content.res.Resources.getSystem().displayMetrics.heightPixels
         val maxRvHeight = (screenHeight * 0.55).toInt()
 
@@ -3530,7 +3534,6 @@ class MainActivity : AppCompatActivity() {
                     setTextColor(Color.parseColor("#00E676"))
                     textSize = 15f
                     setTypeface(null, android.graphics.Typeface.BOLD)
-                    // 🌟 核心修复2：增加右边距 + 强制单行 + 超出显示省略号，彻底杜绝折行覆盖时间戳的问题
                     layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
                         marginEnd = (10 * density).toInt()
                     }
@@ -3731,7 +3734,17 @@ class MainActivity : AppCompatActivity() {
             .create()
 
         dialog?.window?.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(Color.TRANSPARENT))
-        if (!isFinishing && !isDestroyed) dialog?.show()
+
+        // 🌟 核心突破：在 show() 调用之后，强制锁死弹窗窗口的物理宽度
+        if (!isFinishing && !isDestroyed) {
+            dialog?.show()
+
+            // 强行将弹窗的物理宽度锁定为屏幕宽度的 90%
+            // 如此一来，RecyclerView 以及里面所有的卡片卡槽都会被强制“横向拉满”，长度绝对统一！
+            val metrics = resources.displayMetrics
+            val dialogWidth = (metrics.widthPixels * 0.9).toInt()
+            dialog?.window?.setLayout(dialogWidth, ViewGroup.LayoutParams.WRAP_CONTENT)
+        }
     }
 
     private fun deleteNotebookEntry(targetId: String) {
