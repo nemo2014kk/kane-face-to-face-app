@@ -370,14 +370,17 @@ class AiEngine {
         })
     }
 
+    // 🌟 新增：用于接收带有物理坐标的视觉翻译数据体
+    data class ImageRegion(val ymin: Int, val xmin: Int, val ymax: Int, val xmax: Int, val original: String, val translated: String)
+
     fun translateImageWithGemini(
         bitmap: android.graphics.Bitmap,
         sourceLang: String,
         targetLang: String,
-        callback: (Boolean, String, String) -> Unit
+        callback: (Boolean, List<ImageRegion>, String) -> Unit
     ) {
         if (geminiApiKey.isBlank()) {
-            mainHandler.post { callback(false, "", "⛔ 请先在设置中填写 Gemini API Key") }
+            mainHandler.post { callback(false, emptyList(), "⛔ 请先在设置中填写 Gemini API Key") }
             return
         }
 
@@ -385,7 +388,8 @@ class AiEngine {
         Thread {
             try {
                 val outputStream = java.io.ByteArrayOutputStream()
-                val maxDim = 768f
+                // 🌟 核心修复 2：将分辨率上限由 768 提至 1536，完美看清密集的发票和菜单
+                val maxDim = 1536f
                 val scale = Math.min(maxDim / bitmap.width, maxDim / bitmap.height)
                 val scaledBitmap = if (scale < 1f) {
                     android.graphics.Bitmap.createScaledBitmap(bitmap, (bitmap.width * scale).toInt(), (bitmap.height * scale).toInt(), true)
@@ -394,17 +398,27 @@ class AiEngine {
                 scaledBitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 70, outputStream)
                 val base64Image = android.util.Base64.encodeToString(outputStream.toByteArray(), android.util.Base64.NO_WRAP)
 
+                // 🌟 核心修复 3：主动回收废弃的 Bitmap，断绝图片积压导致的内存泄漏
+                if (scaledBitmap != bitmap) {
+                    scaledBitmap.recycle()
+                }
+
+                // 🌟 核心升级：强迫大模型输出带有归一化物理坐标的 JSON 数组
                 val sysPrompt = """
                     You are an expert OCR and simultaneous interpreter.
                     Action: Extract the text from the provided image and translate it from $sourceLang to $targetLang.
                     STRICT PROTOCOLS:
-                    1. Output ONLY a valid JSON object. Do not include any markdown formatting (like ```json).
+                    1. Output ONLY a valid JSON array of objects. Do not include any markdown formatting (like ```json).
                     2. The JSON format MUST be exactly:
-                    {
-                        "original": "the exact text found in the image",
-                        "translated": "the accurate translation in $targetLang"
-                    }
-                    3. If no text is found in the image, return {"original": "NULL", "translated": "NULL"}.
+                    [
+                        {
+                            "box_2d": [ymin, xmin, ymax, xmax],
+                            "original": "exact text found in this region",
+                            "translated": "accurate translation in $targetLang"
+                        }
+                    ]
+                    3. Coordinates must be normalized integers between 0 and 1000. [ymin, xmin, ymax, xmax].
+                    4. If no text is found in the image, return an empty array [].
                 """.trimIndent()
 
                 val json = JSONObject().apply {
@@ -431,10 +445,9 @@ class AiEngine {
                     .post(json.toString().toRequestBody("application/json".toMediaType()))
                     .build()
 
-                // 执行网络请求...
                 client.newCall(request).enqueue(object : Callback {
                     override fun onFailure(call: Call, e: java.io.IOException) {
-                        mainHandler.post { callback(false, "", "云端失联，请检查网络设置或重试") }
+                        mainHandler.post { callback(false, emptyList(), "云端失联，请检查网络设置或重试") }
                     }
                     override fun onResponse(call: Call, response: Response) {
                         val resStr = response.body?.string() ?: ""
@@ -447,7 +460,6 @@ class AiEngine {
                                         ?.optJSONArray("parts")?.optJSONObject(0)
                                         ?.optString("text", "")?.trim() ?: ""
 
-                                    // 🌟 修复：安全移除深度思考模型的 <think> 标签
                                     var startIdx = content.indexOf("<think>")
                                     var endIdx = content.indexOf("</think>")
                                     while (startIdx != -1 && endIdx != -1 && endIdx > startIdx) {
@@ -457,31 +469,51 @@ class AiEngine {
                                     }
                                     content = content.trim()
 
-                                    if (content.startsWith("```json", ignoreCase = true)) content = content.substringAfter("```json")
-                                    if (content.startsWith("```")) content = content.substringAfter("```")
-                                    if (content.endsWith("```")) content = content.substringBeforeLast("```")
-                                    content = content.trim()
-
-                                    val resultJson = JSONObject(content)
-                                    val original = resultJson.optString("original", "")
-                                    val translated = resultJson.optString("translated", "")
-
-                                    if (original == "NULL" || translated == "NULL") {
-                                        callback(false, "", "⛔ 图片中未识别到任何有效文字")
+                                    // 🌟 核心修复 4：暴力正则提取 JSON，再也不怕大模型乱加废话
+                                    val regex = Regex("\\[.*\\]", RegexOption.DOT_MATCHES_ALL)
+                                    val matchResult = regex.find(content)
+                                    if (matchResult != null) {
+                                        content = matchResult.value
                                     } else {
-                                        callback(true, original, translated)
+                                        callback(false, emptyList(), "AI 未返回有效坐标数据")
+                                        return@post
+                                    }
+
+                                    // 核心解析：将 JSON 数组转换为对象列表
+                                    val resultJson = org.json.JSONArray(content)
+                                    val regions = mutableListOf<ImageRegion>()
+                                    for (i in 0 until resultJson.length()) {
+                                        val item = resultJson.optJSONObject(i) ?: continue
+                                        val box = item.optJSONArray("box_2d")
+                                        if (box != null && box.length() == 4) {
+                                            // 🌟 核心修复 5：加入 coerceIn 物理限制，防止坐标越界崩溃
+                                            regions.add(ImageRegion(
+                                                ymin = box.optInt(0, 0).coerceIn(0, 1000),
+                                                xmin = box.optInt(1, 0).coerceIn(0, 1000),
+                                                ymax = box.optInt(2, 0).coerceIn(0, 1000),
+                                                xmax = box.optInt(3, 0).coerceIn(0, 1000),
+                                                original = item.optString("original", ""),
+                                                translated = item.optString("translated", "")
+                                            ))
+                                        }
+                                    }
+
+                                    if (regions.isEmpty()) {
+                                        callback(false, emptyList(), "⛔ 图片中未识别到任何有效文字")
+                                    } else {
+                                        callback(true, regions, "")
                                     }
                                 } catch (e: Exception) {
-                                    callback(false, "", "AI 返回格式异常，解析失败")
+                                    callback(false, emptyList(), "AI 返回格式异常，解析失败")
                                 }
                             } else {
-                                callback(false, "", "Gemini 拒绝服务 (${response.code})")
+                                callback(false, emptyList(), "Gemini 拒绝服务 (${response.code})")
                             }
                         }
                     }
                 })
             } catch (e: Exception) {
-                mainHandler.post { callback(false, "", "图像编码失败") }
+                mainHandler.post { callback(false, emptyList(), "图像编码失败") }
             }
         }.start()
     }

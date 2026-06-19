@@ -167,6 +167,9 @@ class MainActivity : AppCompatActivity() {
                 resetIsland()
             }
 
+            // 👇 核心修复：只要是从主界面长按唤出的，强制将焦点记忆重置为我方(下方)！
+            lastActiveInputIsTop = false
+
             // 呼出改造后的笔记本模块
             showNotebookSubDialog { content ->
                 // 🛡️ 核心管道调用：isTop = false 代表强制作为“我方”的母语发送
@@ -206,6 +209,12 @@ class MainActivity : AppCompatActivity() {
                 layoutFullscreenOverlay.visibility = View.GONE
                 currentScaleFactor = 1.0f
                 tvFullscreenText.textSize = 38f
+
+                // 👇 新增核心：全屏大字报退出时，如果刚才藏了草稿框，现在把它无损弹回来！
+                pendingDraftDialog?.let {
+                    it.show()
+                    pendingDraftDialog = null
+                }
             }.start()
         }
 
@@ -279,87 +288,126 @@ class MainActivity : AppCompatActivity() {
             currentScaleFactor = 1.0f
             tvFullscreenText.textSize = 38f
 
-            val playParams = btnFullscreenPlay.layoutParams as FrameLayout.LayoutParams
-            if (isTop) {
-                playParams.gravity = android.view.Gravity.TOP or android.view.Gravity.END
-                playParams.setMargins(0, 60, 40, 0)
-            } else {
-                playParams.gravity = android.view.Gravity.BOTTOM or android.view.Gravity.CENTER_HORIZONTAL
-                playParams.setMargins(0, 0, 0, 80)
-            }
-            btnFullscreenPlay.layoutParams = playParams
-
             if (isTop) {
                 tvFullscreenText.text = translatedText
-                tvFullscreenText.setTextColor(Color.parseColor(color))
+                tvFullscreenText.setTextColor(android.graphics.Color.parseColor(color))
             } else {
                 val spannable = android.text.SpannableStringBuilder()
                 val transSpan = android.text.SpannableString(translatedText)
-                transSpan.setSpan(android.text.style.ForegroundColorSpan(Color.parseColor(color)), 0, translatedText.length, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                transSpan.setSpan(android.text.style.ForegroundColorSpan(android.graphics.Color.parseColor(color)), 0, translatedText.length, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
                 spannable.append(transSpan)
 
                 val origStr = "\n\n(原: $originalText)"
                 val origSpan = android.text.SpannableString(origStr)
-                origSpan.setSpan(android.text.style.ForegroundColorSpan(Color.parseColor("#888888")), 0, origStr.length, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                origSpan.setSpan(android.text.style.ForegroundColorSpan(android.graphics.Color.parseColor("#888888")), 0, origStr.length, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
                 origSpan.setSpan(android.text.style.RelativeSizeSpan(0.6f), 0, origStr.length, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
                 origSpan.setSpan(android.text.style.StyleSpan(android.graphics.Typeface.NORMAL), 0, origStr.length, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
                 spannable.append(origSpan)
 
                 tvFullscreenText.text = spannable
-                tvFullscreenText.setTextColor(Color.WHITE)
+                tvFullscreenText.setTextColor(android.graphics.Color.WHITE)
             }
 
-            layoutFullscreenOverlay.rotation = if (isTop) 180f else 0f
+            // 👇 核心统一：只转字，不转底板！
+            val scrollFullscreen = findViewById<ScrollView>(R.id.scroll_fullscreen)
+            scrollFullscreen.rotation = if (isTop) 180f else 0f
+
+            layoutFullscreenOverlay.rotation = 0f
             layoutFullscreenOverlay.alpha = 0f
             layoutFullscreenOverlay.visibility = View.VISIBLE
             layoutFullscreenOverlay.animate().alpha(1f).setDuration(150).start()
 
+            // 👇 完美对称左边：播放按钮
             if (voiceId.startsWith("hy-AM")) {
                 btnFullscreenPlay.visibility = View.GONE
             } else {
                 btnFullscreenPlay.visibility = View.VISIBLE
-                val strPlay = if (isTop) "🔊 Play Audio" else "🔊 播放语音"
-                val strStop = if (isTop) "⏹️ Stop Audio" else "⏹️ 停止播报"
+                val strPlay = "🔊 播放语音"
+                val strStop = "⏹️ 停止播报"
 
                 btnFullscreenPlay.text = strPlay
-                btnFullscreenPlay.setTextColor(Color.WHITE)
-                (btnFullscreenPlay.background as GradientDrawable).setStroke(3, Color.parseColor("#444444"))
+                btnFullscreenPlay.setTextColor(android.graphics.Color.WHITE)
+                btnFullscreenPlay.textSize = 16f
+                btnFullscreenPlay.setPadding(60, 30, 60, 30)
+                btnFullscreenPlay.background = android.graphics.drawable.GradientDrawable().apply {
+                    setColor(android.graphics.Color.parseColor("#1A1A1B"))
+                    cornerRadius = 60f
+                    setStroke(4, android.graphics.Color.parseColor("#00BCFF"))
+                }
+
+                val playParams = btnFullscreenPlay.layoutParams as FrameLayout.LayoutParams
+                playParams.gravity = android.view.Gravity.BOTTOM or android.view.Gravity.START
+                playParams.setMargins(60, 0, 0, 100)
+                btnFullscreenPlay.layoutParams = playParams
 
                 btnFullscreenPlay.setOnClickListener {
                     triggerVibration(50)
                     if (edgeTts.isSpeaking) {
                         edgeTts.stop()
                         btnFullscreenPlay.text = strPlay
-                        btnFullscreenPlay.setTextColor(Color.WHITE)
-                        (btnFullscreenPlay.background as GradientDrawable).setStroke(3, Color.parseColor("#444444"))
+                        btnFullscreenPlay.setTextColor(android.graphics.Color.WHITE)
+                        (btnFullscreenPlay.background as android.graphics.drawable.GradientDrawable).setStroke(4, android.graphics.Color.parseColor("#00BCFF"))
                     } else {
                         edgeTts.speak(translatedText, voiceId,
                             onNodeSelected = { nodeName ->
                                 runOnUiThread {
-                                    // 🌟 按钮状态变更为：连接节点中
                                     btnFullscreenPlay.text = "⏳ 连接 $nodeName"
-                                    btnFullscreenPlay.setTextColor(Color.parseColor("#00BCFF"))
-                                    (btnFullscreenPlay.background as GradientDrawable).setStroke(3, Color.parseColor("#00BCFF"))
+                                    btnFullscreenPlay.setTextColor(android.graphics.Color.parseColor("#00BCFF"))
                                 }
                             },
                             onStart = {
                                 runOnUiThread {
                                     btnFullscreenPlay.text = strStop
-                                    btnFullscreenPlay.setTextColor(Color.parseColor("#00FF00"))
-                                    (btnFullscreenPlay.background as GradientDrawable).setStroke(3, Color.parseColor("#00FF00"))
+                                    btnFullscreenPlay.setTextColor(android.graphics.Color.parseColor("#00FF00"))
+                                    (btnFullscreenPlay.background as android.graphics.drawable.GradientDrawable).setStroke(4, android.graphics.Color.parseColor("#00FF00"))
                                 }
                             },
                             onDone = {
                                 runOnUiThread {
                                     btnFullscreenPlay.text = strPlay
-                                    btnFullscreenPlay.setTextColor(Color.WHITE)
-                                    (btnFullscreenPlay.background as GradientDrawable).setStroke(3, Color.parseColor("#444444"))
+                                    btnFullscreenPlay.setTextColor(android.graphics.Color.WHITE)
+                                    (btnFullscreenPlay.background as android.graphics.drawable.GradientDrawable).setStroke(4, android.graphics.Color.parseColor("#00BCFF"))
                                 }
                             }
                         )
                     }
                 }
             }
+
+            // 👇 完美对称右边：赋予双击气泡大字报白嫖“翻转”功能！
+            var btnFlip = layoutFullscreenOverlay.findViewWithTag<TextView>("btn_flip_screen")
+            if (btnFlip == null) {
+                btnFlip = TextView(this@MainActivity).apply {
+                    tag = "btn_flip_screen"
+                    this.text = "🔄 翻转视角"
+                    setTextColor(android.graphics.Color.WHITE)
+                    textSize = 16f
+                    setTypeface(null, android.graphics.Typeface.BOLD)
+                    setPadding(60, 30, 60, 30)
+                    gravity = android.view.Gravity.CENTER
+                    background = android.graphics.drawable.GradientDrawable().apply {
+                        setColor(android.graphics.Color.parseColor("#1A1A1B"))
+                        cornerRadius = 60f
+                        setStroke(4, android.graphics.Color.parseColor("#00E676"))
+                    }
+                    val params = FrameLayout.LayoutParams(
+                        FrameLayout.LayoutParams.WRAP_CONTENT,
+                        FrameLayout.LayoutParams.WRAP_CONTENT
+                    ).apply {
+                        gravity = android.view.Gravity.BOTTOM or android.view.Gravity.END
+                        setMargins(0, 0, 60, 100)
+                    }
+                    layoutFullscreenOverlay.addView(this, params)
+
+                    setOnClickListener {
+                        triggerVibration(40)
+                        val currentRotation = scrollFullscreen.rotation
+                        val targetRotation = if (currentRotation == 0f) 180f else 0f
+                        scrollFullscreen.animate().rotation(targetRotation).setDuration(250).start()
+                    }
+                }
+            }
+            btnFlip.visibility = View.VISIBLE
         }
 
         val onDoubleTapTop = { msg: ChatMessage -> showFullscreenDisplay(msg.translatedText, msg.originalText, msg.voiceId, "#00BCFF", true) }
@@ -1168,12 +1216,144 @@ class MainActivity : AppCompatActivity() {
 
         if (!isFinishing && !isDestroyed) dialog.show()
     }
-    private fun showTextInputDialog() {
+    // 🌟 新增一个全局变量，用来记忆输入框的状态，防止弹窗“叠罗汉”
+    private var currentTextInputDialog: androidx.appcompat.app.AlertDialog? = null
+    // 👇 新增：用于在全屏大字报期间，把没写完的草稿框暂存起来
+    private var pendingDraftDialog: androidx.appcompat.app.AlertDialog? = null
+    // 👇 新增：记忆最后一次激活的是上方还是下方输入框
+    private var lastActiveInputIsTop = false
+
+    // 🌟 新增：专门用于展示输入框草稿的全屏大字报引擎 (含发音与翻转)
+    private fun showDraftFullscreenDisplay(text: String, isTop: Boolean, color: String, voiceId: String) {
+        triggerVibration(30)
+
+        tvFullscreenText.textSize = 38f
+        tvFullscreenText.text = text
+        tvFullscreenText.setTextColor(android.graphics.Color.parseColor(color))
+
+        // 👇 核心修正 1：只翻转装载文字的滑动层，底板和按钮永远不转！
+        val scrollFullscreen = findViewById<ScrollView>(R.id.scroll_fullscreen)
+        scrollFullscreen.rotation = if (isTop) 180f else 0f
+
+        layoutFullscreenOverlay.rotation = 0f
+        layoutFullscreenOverlay.alpha = 0f
+        layoutFullscreenOverlay.visibility = View.VISIBLE
+        layoutFullscreenOverlay.animate().alpha(1f).setDuration(150).start()
+
+        // 👇 核心修正 2：赛博风“播放”按钮 (永远锚定在左下角)
+        val btnFullscreenPlay = findViewById<TextView>(R.id.btn_fullscreen_play)
+        if (voiceId.startsWith("hy-AM")) {
+            btnFullscreenPlay.visibility = View.GONE
+        } else {
+            btnFullscreenPlay.visibility = View.VISIBLE
+            val strPlay = "🔊 播放语音"
+            val strStop = "⏹️ 停止播报"
+            btnFullscreenPlay.text = strPlay
+            btnFullscreenPlay.setTextColor(android.graphics.Color.WHITE)
+            btnFullscreenPlay.textSize = 16f
+            btnFullscreenPlay.setPadding(60, 30, 60, 30) // 胶囊内边距
+            btnFullscreenPlay.background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(android.graphics.Color.parseColor("#1A1A1B"))
+                cornerRadius = 60f
+                setStroke(4, android.graphics.Color.parseColor("#00BCFF")) // 蓝边框
+            }
+
+            val playParams = btnFullscreenPlay.layoutParams as FrameLayout.LayoutParams
+            playParams.gravity = android.view.Gravity.BOTTOM or android.view.Gravity.START
+            playParams.setMargins(60, 0, 0, 100) // 靠左 60，离底 100
+            btnFullscreenPlay.layoutParams = playParams
+
+            btnFullscreenPlay.setOnClickListener {
+                triggerVibration(50)
+                if (edgeTts.isSpeaking) {
+                    edgeTts.stop()
+                    btnFullscreenPlay.text = strPlay
+                    btnFullscreenPlay.setTextColor(android.graphics.Color.WHITE)
+                    (btnFullscreenPlay.background as android.graphics.drawable.GradientDrawable).setStroke(4, android.graphics.Color.parseColor("#00BCFF"))
+                } else {
+                    edgeTts.speak(text, voiceId,
+                        onNodeSelected = { nodeName ->
+                            runOnUiThread {
+                                btnFullscreenPlay.text = "⏳ 连接 $nodeName"
+                                btnFullscreenPlay.setTextColor(android.graphics.Color.parseColor("#00BCFF"))
+                            }
+                        },
+                        onStart = {
+                            runOnUiThread {
+                                btnFullscreenPlay.text = strStop
+                                btnFullscreenPlay.setTextColor(android.graphics.Color.parseColor("#00FF00"))
+                                (btnFullscreenPlay.background as android.graphics.drawable.GradientDrawable).setStroke(4, android.graphics.Color.parseColor("#00FF00"))
+                            }
+                        },
+                        onDone = {
+                            runOnUiThread {
+                                btnFullscreenPlay.text = strPlay
+                                btnFullscreenPlay.setTextColor(android.graphics.Color.WHITE)
+                                (btnFullscreenPlay.background as android.graphics.drawable.GradientDrawable).setStroke(4, android.graphics.Color.parseColor("#00BCFF"))
+                            }
+                        }
+                    )
+                }
+            }
+        }
+
+        // 👇 核心修正 3：赛博风“翻转”按钮 (永远锚定在右下角)
+        var btnFlip = layoutFullscreenOverlay.findViewWithTag<TextView>("btn_flip_screen")
+        if (btnFlip == null) {
+            btnFlip = TextView(this).apply {
+                tag = "btn_flip_screen"
+                this.text = "🔄 翻转视角"
+                setTextColor(android.graphics.Color.WHITE)
+                textSize = 16f
+                setTypeface(null, android.graphics.Typeface.BOLD)
+                setPadding(60, 30, 60, 30) // 胶囊内边距
+                gravity = android.view.Gravity.CENTER
+                background = android.graphics.drawable.GradientDrawable().apply {
+                    setColor(android.graphics.Color.parseColor("#1A1A1B"))
+                    cornerRadius = 60f
+                    setStroke(4, android.graphics.Color.parseColor("#00E676")) // 绿边框
+                }
+
+                val params = FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.WRAP_CONTENT,
+                    FrameLayout.LayoutParams.WRAP_CONTENT
+                ).apply {
+                    gravity = android.view.Gravity.BOTTOM or android.view.Gravity.END
+                    setMargins(0, 0, 60, 100) // 靠右 60，离底 100 (完美对称)
+                }
+                layoutFullscreenOverlay.addView(this, params)
+            }
+        } else {
+            btnFlip.background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(android.graphics.Color.parseColor("#1A1A1B"))
+                cornerRadius = 60f
+                setStroke(4, android.graphics.Color.parseColor("#00E676"))
+            }
+            val flipParams = btnFlip.layoutParams as FrameLayout.LayoutParams
+            flipParams.gravity = android.view.Gravity.BOTTOM or android.view.Gravity.END
+            flipParams.setMargins(0, 0, 60, 100)
+            btnFlip.layoutParams = flipParams
+        }
+        btnFlip.visibility = View.VISIBLE
+
+        // 点击翻转，只转 ScrollView
+        btnFlip.setOnClickListener {
+            triggerVibration(40)
+            val currentRotation = scrollFullscreen.rotation
+            val targetRotation = if (currentRotation == 0f) 180f else 0f
+            scrollFullscreen.animate().rotation(targetRotation).setDuration(250).start()
+        }
+
+        pendingDraftDialog = currentTextInputDialog
+    }
+    private fun showTextInputDialog(initialText: String = "") {
+        currentTextInputDialog?.dismiss() // 🌟 每次打开前，先清理旧的弹窗
+
         val context = this
         val layout = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(60, 50, 60, 50)
-            layoutTransition = android.animation.LayoutTransition() // 🌟 开启全局丝滑动画
+            layoutTransition = android.animation.LayoutTransition()
             background = GradientDrawable().apply {
                 setColor(Color.parseColor("#1A1A1B"))
                 cornerRadius = 40f
@@ -1181,9 +1361,6 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        var dialog: AlertDialog? = null
-
-        // 🌟 定义装载单个输入模块所有 UI 组件的数据容器，方便后续统一调度
         class ModuleUI(
             val root: LinearLayout,
             val title: TextView,
@@ -1196,15 +1373,16 @@ class MainActivity : AppCompatActivity() {
         fun createInputModule(titleText: String, isTop: Boolean, activeColor: String): ModuleUI {
             val moduleLayout = LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
-                layoutTransition = android.animation.LayoutTransition() // 🌟 开启丝滑折叠动画
+                layoutTransition = android.animation.LayoutTransition()
                 layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
                     bottomMargin = 50
                 }
             }
 
+            // 🌟 还原为极简标题栏
             val title = TextView(context).apply {
                 text = titleText
-                setTextColor(Color.parseColor(activeColor))
+                setTextColor(android.graphics.Color.parseColor(activeColor))
                 textSize = 14f
                 setPadding(10, 0, 0, 15)
                 setTypeface(null, android.graphics.Typeface.BOLD)
@@ -1215,15 +1393,15 @@ class MainActivity : AppCompatActivity() {
                 orientation = LinearLayout.HORIZONTAL
                 layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
                 isBaselineAligned = false
-                layoutTransition = android.animation.LayoutTransition() // 🌟 开启丝滑显隐动画
+                layoutTransition = android.animation.LayoutTransition()
                 clipChildren = false
                 clipToPadding = false
             }
 
             val et = EditText(context).apply {
                 hint = "输入文字 / Type here..."
-                setHintTextColor(Color.parseColor("#555555"))
-                setTextColor(Color.WHITE)
+                setHintTextColor(android.graphics.Color.parseColor("#555555"))
+                setTextColor(android.graphics.Color.WHITE)
                 textSize = 16f
                 setPadding(35, 30, 35, 30)
                 gravity = android.view.Gravity.TOP or android.view.Gravity.START
@@ -1232,9 +1410,9 @@ class MainActivity : AppCompatActivity() {
                 layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
                     marginEnd = 25
                 }
-                background = GradientDrawable().apply {
-                    setColor(Color.parseColor("#0F0F0F"))
-                    setStroke(2, Color.DKGRAY)
+                background = android.graphics.drawable.GradientDrawable().apply {
+                    setColor(android.graphics.Color.parseColor("#0F0F0F"))
+                    setStroke(2, android.graphics.Color.DKGRAY)
                     cornerRadius = 20f
                 }
             }
@@ -1245,7 +1423,7 @@ class MainActivity : AppCompatActivity() {
 
             val btnContainer = LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
-                layoutTransition = android.animation.LayoutTransition() // 🌟 开启丝滑推拉动画
+                layoutTransition = android.animation.LayoutTransition()
                 layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.MATCH_PARENT).apply {
                     marginStart = (12 * density).toInt()
                 }
@@ -1319,9 +1497,6 @@ class MainActivity : AppCompatActivity() {
             bottomBtnGroup.addView(speakerBtn)
             bottomBtnGroup.addView(sendBtn)
 
-            // ==========================================
-            // 💡 交互逻辑 (完全保留你原本的安全逻辑)
-            // ==========================================
             btnSave.setOnClickListener {
                 val content = et.text.toString().trim()
                 if (content.isEmpty()) {
@@ -1335,8 +1510,6 @@ class MainActivity : AppCompatActivity() {
 
                 val rawTitle = content.replace("\n", " ").take(8)
                 val title = if (content.length > 8) "$rawTitle..." else rawTitle
-
-                // 🌟 新增：获取当前时间作为时间戳
                 val timeFormatter = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.getDefault())
                 val timeStr = timeFormatter.format(java.util.Date())
 
@@ -1345,7 +1518,7 @@ class MainActivity : AppCompatActivity() {
                     put("id", java.util.UUID.randomUUID().toString())
                     put("title", title)
                     put("content", content)
-                    put("timestamp", timeStr) // 👈 存入时间戳
+                    put("timestamp", timeStr)
                 }
                 val newArray = org.json.JSONArray()
                 newArray.put(newObj)
@@ -1357,10 +1530,9 @@ class MainActivity : AppCompatActivity() {
 
             btnNotebook.setOnClickListener {
                 triggerVibration(30)
-                // 🌟 改为回调 (Callback) 模式接收文字，解除与 EditText 的强耦合
                 showNotebookSubDialog { content ->
                     et.setText(content)
-                    et.setSelection(et.text.length) // 光标自动移到末尾
+                    et.setSelection(et.text.length)
                 }
             }
 
@@ -1380,26 +1552,9 @@ class MainActivity : AppCompatActivity() {
                     val voiceId = getSmartVoiceId(voiceName, targetLangName)
 
                     edgeTts.speak(input, voiceId,
-                        onNodeSelected = { _ ->
-                            runOnUiThread {
-                                speakerBtn.text = "⏳"
-                                (speakerBtn.background as GradientDrawable).setColor(Color.parseColor("#121212"))
-                            }
-                        },
-                        onStart = {
-                            runOnUiThread {
-                                speakerBtn.text = "⏹️"
-                                (speakerBtn.background as GradientDrawable).setColor(Color.parseColor("#331111"))
-                                (speakerBtn.background as GradientDrawable).setStroke((2 * density).toInt(), Color.parseColor("#FF4444"))
-                            }
-                        },
-                        onDone = {
-                            runOnUiThread {
-                                speakerBtn.text = "🔊"
-                                (speakerBtn.background as GradientDrawable).setColor(Color.parseColor("#252526"))
-                                (speakerBtn.background as GradientDrawable).setStroke((2 * density).toInt(), Color.parseColor(activeColor))
-                            }
-                        }
+                        onNodeSelected = { _ -> runOnUiThread { speakerBtn.text = "⏳"; (speakerBtn.background as GradientDrawable).setColor(Color.parseColor("#121212")) } },
+                        onStart = { runOnUiThread { speakerBtn.text = "⏹️"; (speakerBtn.background as GradientDrawable).setColor(Color.parseColor("#331111")); (speakerBtn.background as GradientDrawable).setStroke((2 * density).toInt(), Color.parseColor("#FF4444")) } },
+                        onDone = { runOnUiThread { speakerBtn.text = "🔊"; (speakerBtn.background as GradientDrawable).setColor(Color.parseColor("#252526")); (speakerBtn.background as GradientDrawable).setStroke((2 * density).toInt(), Color.parseColor(activeColor)) } }
                     )
                 }
             }
@@ -1413,68 +1568,144 @@ class MainActivity : AppCompatActivity() {
                         val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
                         imm.hideSoftInputFromWindow(et.windowToken, 0)
                     } catch (e: Exception) {}
-                    dialog?.dismiss()
+                    currentTextInputDialog?.dismiss() // 🌟 使用新变量
                     processTextPipeline(input, isTop)
                 }
             }
 
-            // 拼装视图
             btnContainer.addView(topBtnGroup)
             btnContainer.addView(spacer)
             btnContainer.addView(bottomBtnGroup)
-
             inputRow.addView(et)
             inputRow.addView(btnContainer)
             moduleLayout.addView(inputRow)
-
-            // 将组合好的 UI 返回出去
             return ModuleUI(moduleLayout, title, inputRow, et, btnContainer, speakerBtn)
         }
 
-        // 实例化上下两个模块
         val topModule = createInputModule("✍️ 对方文字输入【 ${ptLangName} 】", isTop = true, activeColor = "#00BCFF")
         val bottomModule = createInputModule("✍️ 我方文字输入【 ${myLangName} 】", isTop = false, activeColor = "#00E676")
 
         layout.addView(topModule.root)
         layout.addView(bottomModule.root)
 
-        // =========================================================
-        // 🧠 核心重构：状态协调器 (Coordinator) - 完美实现手风琴折叠效果
-        // =========================================================
-        fun updateSpeakerState(module: ModuleUI, hasFocus: Boolean, currentText: String) {
-            if (hasFocus || currentText.isNotEmpty()) {
-                module.speakerBtn.visibility = View.VISIBLE
-            } else {
-                module.speakerBtn.visibility = View.GONE
+        // 👇 ================== 🌟 提前布局：全局通用底部控制台 ================== 👇
+        val universalControlBar = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+                topMargin = 20
+            }
+            visibility = View.GONE // 👈 核心修复 1：初始状态必须强行隐藏！
+        }
+
+        var universalFontSize = 16f
+
+        val btnUniversalMinus = TextView(context).apply {
+            text = "➖ 缩小"
+            setTextColor(Color.parseColor("#888888"))
+            textSize = 14f
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            gravity = android.view.Gravity.CENTER
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            setPadding(0, 20, 0, 10)
+            setOnClickListener {
+                triggerVibration(20)
+                if (universalFontSize > 12f) {
+                    universalFontSize -= 2f
+                    topModule.et.textSize = universalFontSize
+                    bottomModule.et.textSize = universalFontSize
+                }
             }
         }
 
+        val btnUniversalFullscreen = TextView(context).apply {
+            text = "⛶ 全屏展示"
+            setTextColor(android.graphics.Color.parseColor("#00E676"))
+            textSize = 15f
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            gravity = android.view.Gravity.CENTER
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            setPadding(0, 20, 0, 10)
+            setOnClickListener {
+                val isTopActive = topModule.inputRow.visibility == View.VISIBLE
+                val activeModule = if (isTopActive) topModule else bottomModule
+                val activeColor = if (isTopActive) "#00BCFF" else "#00E676"
+                val draftText = activeModule.et.text.toString().trim()
+
+                if (draftText.isNotEmpty()) {
+                    triggerVibration(40)
+
+                    // 👇 核心升级：智能获取当前焦点所属的发音人 ID
+                    val voiceName = if (isTopActive) ptVoiceName else myVoiceName
+                    val langName = if (isTopActive) ptLangName else myLangName
+                    val voiceId = getSmartVoiceId(voiceName, langName)
+
+                    try {
+                        val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
+                        imm.hideSoftInputFromWindow(activeModule.et.windowToken, 0)
+                    } catch (e: Exception) {}
+                    currentTextInputDialog?.hide()
+
+                    // 👇 把 voiceId 一并传给大字报
+                    showDraftFullscreenDisplay(draftText, isTopActive, activeColor, voiceId)
+                } else {
+                    Toast.makeText(context, "⚠️ 框内还没有文字哦", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+
+        val btnUniversalPlus = TextView(context).apply {
+            text = "➕ 放大"
+            setTextColor(Color.parseColor("#888888"))
+            textSize = 14f
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            gravity = android.view.Gravity.CENTER
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            setPadding(0, 20, 0, 10)
+            setOnClickListener {
+                triggerVibration(20)
+                if (universalFontSize < 36f) {
+                    universalFontSize += 2f
+                    topModule.et.textSize = universalFontSize
+                    bottomModule.et.textSize = universalFontSize
+                }
+            }
+        }
+
+        universalControlBar.addView(btnUniversalMinus)
+        universalControlBar.addView(btnUniversalFullscreen)
+        universalControlBar.addView(btnUniversalPlus)
+        layout.addView(universalControlBar)
+        // 👆 ================== 🌟 结束：全局通用底部控制台 ================== 👆
+
+        fun updateSpeakerState(module: ModuleUI, hasFocus: Boolean, currentText: String) {
+            if (hasFocus || currentText.isNotEmpty()) module.speakerBtn.visibility = View.VISIBLE
+            else module.speakerBtn.visibility = View.GONE
+        }
+
         fun switchToTopFocus() {
-            // 展开上方
+            lastActiveInputIsTop = true // 👈 记录焦点为上方
             topModule.title.text = "✍️ 对方文字输入【 ${ptLangName} 】"
             topModule.inputRow.visibility = View.VISIBLE
             topModule.btnContainer.visibility = View.VISIBLE
             topModule.et.minLines = 12
-
-            // 折叠下方
-            bottomModule.inputRow.visibility = View.GONE // 将下方主体彻底隐藏
-            bottomModule.title.text = "👉 点击切换：我方输入【 ${myLangName} 】" // 标题变为切换按钮
+            bottomModule.inputRow.visibility = View.GONE
+            bottomModule.title.text = "👉 点击切换：我方输入【 ${myLangName} 】"
+            universalControlBar.visibility = View.VISIBLE // 👈 核心修复 2：只要展开就显示控制台
         }
 
         fun switchToBottomFocus() {
-            // 展开下方
+            lastActiveInputIsTop = false // 👈 记录焦点为下方
             bottomModule.title.text = "✍️ 我方文字输入【 ${myLangName} 】"
             bottomModule.inputRow.visibility = View.VISIBLE
             bottomModule.btnContainer.visibility = View.VISIBLE
             bottomModule.et.minLines = 12
-
-            // 折叠上方
-            topModule.inputRow.visibility = View.GONE // 将上方主体彻底隐藏
-            topModule.title.text = "👉 点击切换：对方输入【 ${ptLangName} 】" // 标题变为切换按钮
+            topModule.inputRow.visibility = View.GONE
+            topModule.title.text = "👉 点击切换：对方输入【 ${ptLangName} 】"
+            universalControlBar.visibility = View.VISIBLE // 👈 核心修复 2：只要展开就显示控制台
         }
 
         fun resetInitialState() {
-            // 初始形态：极其克制。两者都只显示单薄的输入框，隐藏右侧的柱状按钮
             topModule.title.text = "✍️ 对方文字输入【 ${ptLangName} 】"
             topModule.inputRow.visibility = View.VISIBLE
             topModule.btnContainer.visibility = View.GONE
@@ -1484,13 +1715,11 @@ class MainActivity : AppCompatActivity() {
             bottomModule.inputRow.visibility = View.VISIBLE
             bottomModule.btnContainer.visibility = View.GONE
             bottomModule.et.minLines = 2
+
+            universalControlBar.visibility = View.GONE // 👈 核心修复 3：初始状态再次确保隐藏
         }
 
-        // ==========================================
-        // 🔗 绑定协调器事件 (取代以前各自为战的监听)
-        // ==========================================
         fun bindModuleEvents(module: ModuleUI, isTop: Boolean, activeColor: String) {
-            // 1. 容错退路：点击折叠的小标题 -> 先把界面展开，再强制请求焦点并拉起软键盘
             module.title.setOnClickListener {
                 if (isTop) switchToTopFocus() else switchToBottomFocus()
                 module.et.post {
@@ -1499,8 +1728,6 @@ class MainActivity : AppCompatActivity() {
                     imm.showSoftInput(module.et, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT)
                 }
             }
-
-            // 2. 焦点监听：处理边框高亮与自动协调折叠
             module.et.setOnFocusChangeListener { _, hasFocus ->
                 val color = if (hasFocus) activeColor else "#444444"
                 val width = if (hasFocus) 5 else 2
@@ -1509,15 +1736,11 @@ class MainActivity : AppCompatActivity() {
                     setStroke(width, Color.parseColor(color))
                     cornerRadius = 20f
                 }
-
-                // 一旦获得焦点，通知协调器折叠另一方
                 if (hasFocus) {
                     if (isTop) switchToTopFocus() else switchToBottomFocus()
                 }
                 updateSpeakerState(module, hasFocus, module.et.text.toString().trim())
             }
-
-            // 3. 文字监听：单独控制喇叭
             module.et.addTextChangedListener(object : android.text.TextWatcher {
                 override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
                 override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
@@ -1530,20 +1753,32 @@ class MainActivity : AppCompatActivity() {
         bindModuleEvents(topModule, isTop = true, activeColor = "#00BCFF")
         bindModuleEvents(bottomModule, isTop = false, activeColor = "#00E676")
 
-        // 界面刚弹出来时，让它们处于初始“克制选择”状态
-        resetInitialState()
+        // 🌟 核心拦截：智能判断当前属于谁的领地，完美实现即点即用！
+        if (initialText.isNotEmpty()) {
+            if (lastActiveInputIsTop) {
+                topModule.et.setText(initialText)
+                topModule.et.setSelection(initialText.length)
+                switchToTopFocus()
+                updateSpeakerState(topModule, topModule.et.hasFocus(), initialText)
+            } else {
+                bottomModule.et.setText(initialText)
+                bottomModule.et.setSelection(initialText.length)
+                switchToBottomFocus()
+                updateSpeakerState(bottomModule, bottomModule.et.hasFocus(), initialText)
+            }
+        } else {
+            resetInitialState()
+        }
 
-        dialog = AlertDialog.Builder(this)
+        currentTextInputDialog = androidx.appcompat.app.AlertDialog.Builder(this)
             .setView(layout)
             .create()
 
-        dialog.window?.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(Color.TRANSPARENT))
-        dialog.window?.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+        currentTextInputDialog?.window?.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(Color.TRANSPARENT))
+        currentTextInputDialog?.window?.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+        currentTextInputDialog?.setOnDismissListener { edgeTts.stop() }
 
-        // 🌟 终极防线：只要对话框因为任何原因消失了，立刻停掉TTS，杜绝退到主界面还听见幽灵朗读
-        dialog.setOnDismissListener { edgeTts.stop() }
-
-        if (!isFinishing && !isDestroyed) dialog.show()
+        if (!isFinishing && !isDestroyed) currentTextInputDialog?.show()
     }
 
     private fun loadSettings() {
@@ -1813,159 +2048,6 @@ class MainActivity : AppCompatActivity() {
             .create()
 
         if (!isFinishing && !isDestroyed) optionsDialog.show()
-    }
-
-    private fun showImageResultDialog(croppedBitmap: android.graphics.Bitmap?, originalText: String, translatedText: String) {
-        val context = this
-        val layout = LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(50, 40, 50, 40)
-            setBackgroundColor(Color.parseColor("#1A1A1B"))
-        }
-
-        if (croppedBitmap != null) {
-            val imgContainer = LinearLayout(context).apply {
-                gravity = android.view.Gravity.CENTER
-                setPadding(0, 0, 0, 30)
-            }
-            val imageView = ImageView(context).apply {
-                setImageBitmap(croppedBitmap)
-                layoutParams = LinearLayout.LayoutParams(
-                    (150 * resources.displayMetrics.density).toInt(),
-                    (100 * resources.displayMetrics.density).toInt()
-                )
-                scaleType = ImageView.ScaleType.CENTER_CROP
-                background = GradientDrawable().apply {
-                    setColor(Color.parseColor("#0F0F0F"))
-                    setStroke(3, Color.parseColor("#333333"))
-                    cornerRadius = 20f
-                }
-                clipToOutline = true
-            }
-            imgContainer.addView(imageView)
-            layout.addView(imgContainer)
-        }
-
-        val tvOriginalHeader = TextView(context).apply {
-            text = "📄 识别原文：(点击复制)"
-            setTextColor(Color.parseColor("#555555"))
-            textSize = 12f
-            setPadding(0, 0, 0, 10)
-        }
-        val tvOriginalBody = TextView(context).apply {
-            text = originalText
-            setTextColor(Color.parseColor("#888888"))
-            textSize = 14f
-            setPadding(30, 20, 30, 20)
-            background = GradientDrawable().apply {
-                setColor(Color.parseColor("#121212"))
-                cornerRadius = 15f
-            }
-            setOnClickListener {
-                copyToClipboard("识别原文", originalText)
-                animate().alpha(0.3f).setDuration(100).withEndAction {
-                    animate().alpha(1f).setDuration(100).start()
-                }.start()
-            }
-        }
-        layout.addView(tvOriginalHeader)
-        layout.addView(tvOriginalBody)
-
-        val tvTranslatedHeader = TextView(context).apply {
-            text = "✨ 智能翻译：(点击复制)"
-            setTextColor(Color.parseColor("#00E676"))
-            textSize = 12f
-            setPadding(0, 30, 0, 10)
-        }
-        val tvTranslatedBody = TextView(context).apply {
-            text = translatedText
-            setTextColor(Color.WHITE)
-            textSize = 20f
-            setTypeface(null, android.graphics.Typeface.BOLD)
-            setPadding(30, 30, 30, 30)
-            background = GradientDrawable().apply {
-                setColor(Color.parseColor("#222223"))
-                cornerRadius = 25f
-                setStroke(2, Color.parseColor("#00E676"))
-            }
-            setOnClickListener {
-                copyToClipboard("智能翻译", translatedText)
-                animate().alpha(0.3f).setDuration(100).withEndAction {
-                    animate().alpha(1f).setDuration(100).start()
-                }.start()
-            }
-        }
-        layout.addView(tvTranslatedHeader)
-        layout.addView(tvTranslatedBody)
-
-        val actionRow = LinearLayout(context).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = android.view.Gravity.CENTER
-            setPadding(0, 40, 0, 10)
-        }
-
-        val btnPlay = TextView(context).apply {
-            text = "🔊 语音播报"
-            setTextColor(Color.WHITE)
-            textSize = 16f
-            gravity = android.view.Gravity.CENTER
-            setPadding(40, 20, 40, 20)
-            background = GradientDrawable().apply {
-                setColor(Color.parseColor("#00AA00"))
-                cornerRadius = 50f
-            }
-            setOnClickListener {
-                triggerVibration(40)
-                if (edgeTts.isSpeaking) {
-                    edgeTts.stop()
-                    text = "🔊 语音播报"
-                    setTextColor(Color.WHITE)
-                    (background as GradientDrawable).setColor(Color.parseColor("#00AA00"))
-                } else {
-                    val voiceId = getSmartVoiceId(myVoiceName, myLangName) // 🌟 使用智能路由获取真实发音ID
-                    edgeTts.speak(translatedText, voiceId,
-                        onNodeSelected = { nodeName ->
-                            runOnUiThread {
-                                // 🌟 按钮状态变更为：连接节点中
-                                text = "⏳ 连接 $nodeName"
-                                setTextColor(Color.parseColor("#00BCFF"))
-                                (background as GradientDrawable).setColor(Color.parseColor("#121212"))
-                            }
-                        },
-                        onStart = {
-                            runOnUiThread {
-                                text = "⏹️ 停止播报"
-                                setTextColor(Color.parseColor("#FF4444"))
-                                (background as GradientDrawable).setColor(Color.parseColor("#331111"))
-                            }
-                        },
-                        onDone = {
-                            runOnUiThread {
-                                text = "🔊 语音播报"
-                                setTextColor(Color.WHITE)
-                                (background as GradientDrawable).setColor(Color.parseColor("#00AA00"))
-                            }
-                        }
-                    )
-                }
-            }
-        }
-        actionRow.addView(btnPlay)
-        layout.addView(actionRow)
-
-        val scroll = ScrollView(context).apply { addView(layout) }
-
-        val dialog = AlertDialog.Builder(this)
-            .setCustomTitle(createCyberTitle("👁️ KANE 视觉翻译"))
-            .setView(scroll)
-            .setPositiveButton("完成") { _, _ ->
-                edgeTts.stop()
-                clearVisionCache(forceWipe = true)
-            }
-            .setCancelable(false)
-            .create()
-
-        if (!isFinishing && !isDestroyed) dialog.show()
     }
 
     private fun copyToClipboard(label: String, text: String) {
@@ -2338,10 +2420,17 @@ class MainActivity : AppCompatActivity() {
             setToolbarWidgetColor(Color.parseColor("#00E676"))
             setActiveControlsWidgetColor(Color.parseColor("#00E676"))
             setToolbarTitle("✨ 框选需要破译的文字")
+
+            // 🌟 核心修复 1：解锁自由裁切模式！允许手指直接拖拽线框的四个角和边缘
+            setFreeStyleCropEnabled(true)
+
+            // 🌟 核心修复 2：隐藏底部那排没用的比例切换按钮 (1:1, 16:9等)，让界面变成纯粹的 OCR 扫描器
+            setHideBottomControls(true)
         }
 
         val uCropIntent = com.yalantis.ucrop.UCrop.of(sourceUri, destUri)
             .withOptions(options)
+            .withMaxResultSize(2048, 2048) // 之前加固的防 OOM 内存防线保留
             .getIntent(this)
 
         cropLauncher.launch(uCropIntent)
@@ -2359,14 +2448,15 @@ class MainActivity : AppCompatActivity() {
                 val sourceLangEn = AppConstants.LANG_MAP_EN[ptLangName] ?: "English"
                 val targetLangEn = AppConstants.LANG_MAP_EN[myLangName] ?: "Chinese"
 
-                aiEngine.translateImageWithGemini(bitmap, sourceLangEn, targetLangEn) { success, orig, trans ->
+                // 🌟 更新了数据接收格式
+                aiEngine.translateImageWithGemini(bitmap, sourceLangEn, targetLangEn) { success, regions, errorMsg ->
                     if (isDestroyed || isFinishing) return@translateImageWithGemini
                     if (success) {
                         setIslandState("✨ 破译完成", "#00FF00")
                         resetIslandDelayed()
-                        showImageResultDialog(bitmap, orig, trans)
+                        showImageResultDialog(bitmap, regions) // 传递坐标数据组
                     } else {
-                        setIslandState(trans, "#FF4444")
+                        setIslandState(errorMsg, "#FF4444")
                         resetIslandDelayed(3000)
                         clearVisionCache(forceWipe = true)
                     }
@@ -2380,6 +2470,415 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }.start()
+    }
+
+    private fun showImageResultDialog(croppedBitmap: android.graphics.Bitmap?, regions: List<AiEngine.ImageRegion>) {
+        val context = this
+        val layout = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Color.parseColor("#1A1A1B"))
+            clipChildren = false // 🌟 允许放大的文字冲出边界
+        }
+
+        // ==========================================
+        // 第一排：四键并排控制台 (等比均分宽度)
+        // ==========================================
+        val toggleRow = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
+            setPadding(20, 40, 20, 20)
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+        }
+
+        val btnTranslated = TextView(context).apply {
+            text = "🌐 译文"
+            textSize = 13f
+            maxLines = 1
+            gravity = android.view.Gravity.CENTER
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            setPadding(0, 25, 0, 25)
+            setTextColor(Color.WHITE)
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = 10 }
+            background = GradientDrawable().apply {
+                setColor(Color.parseColor("#00E676"))
+                cornerRadius = 50f
+            }
+        }
+
+        val btnOriginal = TextView(context).apply {
+            text = "📄 原文"
+            textSize = 13f
+            maxLines = 1
+            gravity = android.view.Gravity.CENTER
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            setPadding(0, 25, 0, 25)
+            setTextColor(Color.parseColor("#888888"))
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = 10 }
+            background = GradientDrawable().apply {
+                setColor(Color.parseColor("#252526"))
+                cornerRadius = 50f
+            }
+        }
+
+        val btnCopyAll = TextView(context).apply {
+            text = "📋 复制全文"
+            textSize = 13f
+            maxLines = 1
+            gravity = android.view.Gravity.CENTER
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            setPadding(0, 25, 0, 25)
+            setTextColor(Color.WHITE)
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = 10 }
+            background = GradientDrawable().apply {
+                setColor(Color.parseColor("#333333"))
+                setStroke(2, Color.parseColor("#555555"))
+                cornerRadius = 50f
+            }
+        }
+
+        val btnSaveNote = TextView(context).apply {
+            text = "📑 存入笔记"
+            textSize = 13f
+            maxLines = 1
+            gravity = android.view.Gravity.CENTER
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            setPadding(0, 25, 0, 25)
+            setTextColor(Color.WHITE)
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            background = GradientDrawable().apply {
+                setColor(Color.parseColor("#333333"))
+                setStroke(2, Color.parseColor("#555555"))
+                cornerRadius = 50f
+            }
+        }
+
+        toggleRow.addView(btnTranslated)
+        toggleRow.addView(btnOriginal)
+        toggleRow.addView(btnCopyAll)
+        toggleRow.addView(btnSaveNote)
+        layout.addView(toggleRow)
+
+        // ==========================================
+        // 🌟 第二排：AR 覆盖层全局缩放控制器 (A- / 100% / A+)
+        // ==========================================
+        var overlayScale = 1.0f // 初始化缩放比例
+        val overlayViews = mutableListOf<TextView>() // 提前声明列表
+
+        val fontControlRow = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER
+            setPadding(20, 0, 20, 40)
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+        }
+
+        val pillGroup = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER
+            background = GradientDrawable().apply {
+                setColor(Color.parseColor("#121212"))
+                setStroke(2, Color.parseColor("#333333"))
+                cornerRadius = 50f
+            }
+        }
+
+        val tvScale = TextView(context).apply {
+            text = "100%"
+            textSize = 14f
+            setTextColor(Color.parseColor("#00E676"))
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            setPadding(20, 0, 20, 0)
+        }
+
+        fun applyScaleToOverlays() {
+            tvScale.text = "${(overlayScale * 100).toInt()}%"
+            for (tv in overlayViews) {
+                // 🌟 使用 scaleX 和 scaleY，让框框像放大镜一样弹出来
+                tv.animate().scaleX(overlayScale).scaleY(overlayScale).setDuration(150).start()
+            }
+        }
+
+        val btnMinus = TextView(context).apply {
+            text = "A-"
+            textSize = 16f
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            setPadding(60, 20, 40, 20)
+            setTextColor(Color.WHITE)
+            setOnClickListener {
+                triggerVibration(30)
+                if (overlayScale > 0.6f) { // 最小缩放到 60%
+                    overlayScale -= 0.2f
+                    applyScaleToOverlays()
+                } else {
+                    Toast.makeText(context, "已经是最小了", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+
+        val btnPlus = TextView(context).apply {
+            text = "A+"
+            textSize = 16f
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            setPadding(40, 20, 60, 20)
+            setTextColor(Color.WHITE)
+            setOnClickListener {
+                triggerVibration(30)
+                if (overlayScale < 3.0f) { // 最大放大到 300%
+                    overlayScale += 0.2f
+                    applyScaleToOverlays()
+                } else {
+                    Toast.makeText(context, "已经是最大了", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+
+        pillGroup.addView(btnMinus)
+        pillGroup.addView(tvScale)
+        pillGroup.addView(btnPlus)
+        fontControlRow.addView(pillGroup)
+        layout.addView(fontControlRow)
+
+        // ==========================================
+        // 中间：全屏可滚动 FrameLayout 叠层画布
+        // ==========================================
+        val frameLayout = FrameLayout(context).apply {
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+            clipChildren = false // 🌟 允许放大的文字冲出边界
+            clipToPadding = false
+        }
+
+        val imageView = ImageView(context).apply {
+            setImageBitmap(croppedBitmap)
+            adjustViewBounds = true
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            layoutParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT)
+        }
+        frameLayout.addView(imageView)
+
+        var isShowingTranslated = true
+
+        fun updateOverlayState() {
+            for ((index, region) in regions.withIndex()) {
+                val tv = overlayViews.getOrNull(index) ?: continue
+                if (isShowingTranslated) {
+                    tv.text = region.translated
+                    tv.setTextColor(Color.WHITE)
+                    tv.background = GradientDrawable().apply {
+                        setColor(Color.parseColor("#E61A1A1B"))
+                        setStroke(3, Color.parseColor("#00E676"))
+                        cornerRadius = 8f
+                    }
+                } else {
+                    tv.text = region.original
+                    tv.setTextColor(Color.parseColor("#00BCFF"))
+                    tv.background = GradientDrawable().apply {
+                        setColor(Color.parseColor("#99000000"))
+                        setStroke(3, Color.parseColor("#00BCFF"))
+                        cornerRadius = 8f
+                    }
+                }
+            }
+
+            if (isShowingTranslated) {
+                btnTranslated.setTextColor(Color.WHITE)
+                (btnTranslated.background as GradientDrawable).setColor(Color.parseColor("#00E676"))
+                btnOriginal.setTextColor(Color.parseColor("#888888"))
+                (btnOriginal.background as GradientDrawable).setColor(Color.parseColor("#252526"))
+            } else {
+                btnTranslated.setTextColor(Color.parseColor("#888888"))
+                (btnTranslated.background as GradientDrawable).setColor(Color.parseColor("#252526"))
+                btnOriginal.setTextColor(Color.WHITE)
+                (btnOriginal.background as GradientDrawable).setColor(Color.parseColor("#00BCFF"))
+            }
+        }
+
+        btnTranslated.setOnClickListener {
+            triggerVibration(30)
+            isShowingTranslated = true
+            updateOverlayState()
+        }
+
+        btnOriginal.setOnClickListener {
+            triggerVibration(30)
+            isShowingTranslated = false
+            updateOverlayState()
+        }
+
+        btnCopyAll.setOnClickListener {
+            triggerVibration(40)
+            it.animate().scaleX(0.9f).scaleY(0.9f).setDuration(100).withEndAction {
+                it.animate().scaleX(1f).scaleY(1f).setDuration(100).start()
+            }.start()
+
+            val sb = java.lang.StringBuilder()
+            for (region in regions) {
+                val lineText = if (isShowingTranslated) region.translated else region.original
+                if (lineText.isNotBlank()) {
+                    sb.append(lineText).append("\n")
+                }
+            }
+            val finalContent = sb.toString().trim()
+            if (finalContent.isNotEmpty()) {
+                copyToClipboard(if (isShowingTranslated) "整页译文" else "整页原文", finalContent)
+
+                val originalText = "📋 复制全文"
+                val originalBg = btnCopyAll.background
+                btnCopyAll.text = "✅ 复制成功"
+                btnCopyAll.setTextColor(Color.parseColor("#1A1A1B"))
+                btnCopyAll.background = android.graphics.drawable.GradientDrawable().apply {
+                    setColor(Color.parseColor("#00E676"))
+                    cornerRadius = 50f
+                }
+                btnCopyAll.postDelayed({
+                    btnCopyAll.text = originalText
+                    btnCopyAll.setTextColor(Color.WHITE)
+                    btnCopyAll.background = originalBg
+                }, 800)
+            } else {
+                Toast.makeText(context, "⚠️ 图片中未识别到有效文本", Toast.LENGTH_SHORT).show()
+            }
+        }
+
+        btnSaveNote.setOnClickListener {
+            triggerVibration(40)
+            it.animate().scaleX(0.9f).scaleY(0.9f).setDuration(100).withEndAction {
+                it.animate().scaleX(1f).scaleY(1f).setDuration(100).start()
+            }.start()
+
+            val sb = java.lang.StringBuilder()
+            for (region in regions) {
+                val lineText = if (isShowingTranslated) region.translated else region.original
+                if (lineText.isNotBlank()) {
+                    sb.append(lineText).append("\n")
+                }
+            }
+            val finalContent = sb.toString().trim()
+            if (finalContent.isNotEmpty()) {
+                val rawTitle = finalContent.replace("\n", " ").take(12)
+                val title = if (finalContent.length > 12) "$rawTitle..." else rawTitle
+
+                val timeFormatter = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.getDefault())
+                val timeStr = timeFormatter.format(java.util.Date())
+
+                val array = getNotebookData()
+                val newObj = org.json.JSONObject().apply {
+                    put("id", java.util.UUID.randomUUID().toString())
+                    put("title", "📷 视觉提取: $title")
+                    put("content", finalContent)
+                    put("timestamp", timeStr)
+                }
+
+                val newArray = org.json.JSONArray()
+                newArray.put(newObj)
+                for (i in 0 until array.length()) newArray.put(array.getJSONObject(i))
+                sharedPrefs.edit().putString("kane_notebook_data", newArray.toString()).apply()
+
+                val originalText = "📑 存入笔记"
+                val originalBg = btnSaveNote.background
+                btnSaveNote.text = "✅ 已存入"
+                btnSaveNote.setTextColor(Color.parseColor("#1A1A1B"))
+                btnSaveNote.background = android.graphics.drawable.GradientDrawable().apply {
+                    setColor(Color.parseColor("#00BCFF"))
+                    cornerRadius = 50f
+                }
+                btnSaveNote.postDelayed({
+                    btnSaveNote.text = originalText
+                    btnSaveNote.setTextColor(Color.WHITE)
+                    btnSaveNote.background = originalBg
+                }, 800)
+
+            } else {
+                Toast.makeText(context, "⚠️ 图片中未识别到有效文本", Toast.LENGTH_SHORT).show()
+            }
+        }
+
+        frameLayout.post {
+            val drawable = imageView.drawable ?: return@post
+
+            val imageRect = android.graphics.RectF(0f, 0f, drawable.intrinsicWidth.toFloat(), drawable.intrinsicHeight.toFloat())
+            imageView.imageMatrix.mapRect(imageRect)
+
+            val trueImgWidth = imageRect.width()
+            val trueImgHeight = imageRect.height()
+            val offsetX = imageRect.left
+            val offsetY = imageRect.top
+
+            for (region in regions) {
+                val left = offsetX + (region.xmin / 1000f) * trueImgWidth
+                val top = offsetY + (region.ymin / 1000f) * trueImgHeight
+                val right = offsetX + (region.xmax / 1000f) * trueImgWidth
+                val bottom = offsetY + (region.ymax / 1000f) * trueImgHeight
+
+                val boxWidth = (right - left).toInt().coerceAtLeast(10)
+                val boxHeight = (bottom - top).toInt().coerceAtLeast(10)
+
+                val tvOverlay = TextView(context).apply {
+                    layoutParams = FrameLayout.LayoutParams(boxWidth, boxHeight).apply {
+                        leftMargin = left.toInt()
+                        topMargin = top.toInt()
+                    }
+                    gravity = android.view.Gravity.CENTER
+
+                    // 🌟 核心修复 1：去掉所有内边距，把 100% 的空间榨干给文字
+                    setPadding(0, 0, 0, 0)
+
+                    // 🌟 核心修复 2：【绝对不要用 setSingleLine】！而是用这套连招锁死它：
+                    maxLines = 1 // 限制只有一行
+                    setHorizontallyScrolling(false) // 彻底封死它的横向滚动错觉，让引擎认清现实（宽度是有限的）
+                    ellipsize = null // 严禁使用省略号截断，逼迫引擎只能通过“缩小字号”来解决问题
+
+                    // 🌟 核心修复 3：将最小字号下探到极致的 2sp，哪怕是芝麻大小也得给我完整显示出来
+                    androidx.core.widget.TextViewCompat.setAutoSizeTextTypeUniformWithConfiguration(
+                        this, 2, 100, 1, android.util.TypedValue.COMPLEX_UNIT_SP
+                    )
+
+                    setOnClickListener {
+                        triggerVibration(40)
+                        val currentText = if (isShowingTranslated) region.translated else region.original
+                        val options = arrayOf("🔊 朗读", "📋 复制文本", "📋 复制另一语言")
+                        androidx.appcompat.app.AlertDialog.Builder(context)
+                            .setItems(options) { _, which ->
+                                when (which) {
+                                    0 -> {
+                                        val voiceId = getSmartVoiceId(myVoiceName, myLangName)
+                                        edgeTts.speak(currentText, voiceId,
+                                            onNodeSelected = {},
+                                            onStart = { runOnUiThread { Toast.makeText(context, "🔊 播报中...", Toast.LENGTH_SHORT).show() } },
+                                            onDone = {}
+                                        )
+                                    }
+                                    1 -> copyToClipboard("文本", currentText)
+                                    2 -> {
+                                        val otherText = if (isShowingTranslated) region.original else region.translated
+                                        copyToClipboard("对照文本", otherText)
+                                    }
+                                }
+                            }.show()
+                    }
+                }
+                overlayViews.add(tvOverlay)
+                frameLayout.addView(tvOverlay)
+            }
+            updateOverlayState()
+        }
+
+        val scroll = ScrollView(context).apply {
+            addView(frameLayout)
+            clipChildren = false // 🌟 允许放大的文字冲出边界
+            clipToPadding = false
+        }
+        layout.addView(scroll)
+
+        val dialog = AlertDialog.Builder(this)
+            .setCustomTitle(createCyberTitle("👁️ KANE AR视觉翻译"))
+            .setView(layout)
+            .setPositiveButton("完成") { _, _ ->
+                edgeTts.stop()
+                clearVisionCache(forceWipe = true)
+            }
+            .setCancelable(false)
+            .create()
+
+        if (!isFinishing && !isDestroyed) dialog.show()
     }
 
     private fun clearVisionCache(forceWipe: Boolean = false) {
@@ -2889,15 +3388,12 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showNotebookSubDialog(onItemClicked: (String) -> Unit) {
-        // 🌟 记忆器：保存此时呼出笔记本的来源回调，以便未来无缝重开
         activeNotebookCallback = onItemClicked
         var dialog: androidx.appcompat.app.AlertDialog? = null
-
-        // 🌟 核心修复：声明一个局部的“刷新委托”变量，完美解决因局部函数生命顺序导致的无法引用问题
         var refreshList: () -> Unit = {}
 
         val context = this
-        val density = context.resources.displayMetrics.density // 获取屏幕密度，用于 UI 精细化缩放
+        val density = context.resources.displayMetrics.density
 
         val layout = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
@@ -2905,9 +3401,6 @@ class MainActivity : AppCompatActivity() {
             setBackgroundColor(Color.parseColor("#1A1A1B"))
         }
 
-        // ==========================================
-        // 🌟 视觉微整形：三点式极简指令台 (Horizontal Title + ⋮)
-        // ==========================================
         val titleRow = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = android.view.Gravity.CENTER_VERTICAL
@@ -2921,27 +3414,21 @@ class MainActivity : AppCompatActivity() {
             setTypeface(null, android.graphics.Typeface.BOLD)
         }
 
-        // 占位弹簧，推开左右两侧
-        val spacer = android.widget.Space(context).apply {
-            layoutParams = LinearLayout.LayoutParams(0, 1, 1f)
-        }
+        val spacer = android.widget.Space(context).apply { layoutParams = LinearLayout.LayoutParams(0, 1, 1f) }
 
-        // 💅 极致高冷的三点按钮
         val btnMore = TextView(context).apply {
-            text = "⋮" // Unicode 垂直三点
+            text = "⋮"
             setTextColor(Color.parseColor("#00BCFF"))
             textSize = 22f
             setTypeface(null, android.graphics.Typeface.BOLD)
             setPadding((15 * density).toInt(), (5 * density).toInt(), (15 * density).toInt(), (5 * density).toInt())
 
-            // 使用原生无边界水波纹点击反馈
             val outValue = android.util.TypedValue()
             context.theme.resolveAttribute(android.R.attr.selectableItemBackgroundBorderless, outValue, true)
             setBackgroundResource(outValue.resourceId)
 
             setOnClickListener { anchor ->
                 triggerVibration(30)
-                // 🚀 弹出原生控制台菜单
                 val popup = android.widget.PopupMenu(context, anchor)
                 popup.menu.add(0, 1, 0, "📥 导入笔记本")
                 popup.menu.add(0, 2, 1, "📤 导出笔记本")
@@ -2950,30 +3437,10 @@ class MainActivity : AppCompatActivity() {
 
                 popup.setOnMenuItemClickListener { menuItem ->
                     when (menuItem.itemId) {
-                        1 -> { // 导入
-                            dialog?.dismiss() // 先释放当前弹窗
-                            try {
-                                importNotebookLauncher.launch("*/*")
-                            } catch (e: Exception) {
-                                // 🛡️ 航天级防御 4：捕获部分精简版系统没有文件管理器的异常
-                                Toast.makeText(context, "⚠️ 无法拉起文件管理器，请确保您的手机安装了文件浏览应用", Toast.LENGTH_LONG).show()
-                            }
-                            true
-                        }
-                        2 -> { // 导出
-                            exportNotebook()
-                            true
-                        }
-                        3 -> { // 清空
-                            // 🌟 此时我们使用已经初始化好的“刷新委托”
-                            showClearNotebookConfirmDialog { refreshList() }
-                            true
-                        }
-                        4 -> { // 建立新笔记
-                            // 🌟 此时我们使用已经初始化好的“刷新委托”
-                            showEditNotebookDialog("", "", "") { refreshList() }
-                            true
-                        }
+                        1 -> { dialog?.dismiss(); try { importNotebookLauncher.launch("*/*") } catch (e: Exception) { Toast.makeText(context, "⚠️ 无法拉起文件管理器", Toast.LENGTH_LONG).show() }; true }
+                        2 -> { exportNotebook(); true }
+                        3 -> { showClearNotebookConfirmDialog { refreshList() }; true }
+                        4 -> { showEditNotebookDialog("", "", "") { refreshList() }; true }
                         else -> false
                     }
                 }
@@ -2987,40 +3454,66 @@ class MainActivity : AppCompatActivity() {
         layout.addView(titleRow)
 
         // ==========================================
-        // 👇 渲染原有列表的核心逻辑不变
+        // 🌟 核心升级 1：替换为支持物理拖拽的 RecyclerView 引擎
         // ==========================================
-        val listContainer = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
-
-        val scroll = ScrollView(context).apply {
-            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, (350 * density).toInt())
-            addView(listContainer)
+        val rvList = androidx.recyclerview.widget.RecyclerView(context).apply {
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, (550 * density).toInt())
+            layoutManager = androidx.recyclerview.widget.LinearLayoutManager(context)
         }
-        layout.addView(scroll)
+        layout.addView(rvList)
 
-        fun renderList() {
-            listContainer.removeAllViews()
+        val tvEmpty = TextView(context).apply {
+            text = "📭 笔记本空空如也\n点击右上角 ⋮ 建立或导入笔记吧"
+            setTextColor(Color.parseColor("#555555"))
+            textSize = 14f
+            gravity = android.view.Gravity.CENTER
+            setLineSpacing(10f, 1.2f)
+            setPadding(0, 100, 0, 100)
+            visibility = View.GONE
+        }
+        layout.addView(tvEmpty)
+
+        val notebookItems = mutableListOf<org.json.JSONObject>()
+
+        fun loadDataFromPrefs() {
+            notebookItems.clear()
             val array = getNotebookData()
-
-            if (array.length() == 0) {
-                val tvEmpty = TextView(context).apply {
-                    text = "📭 笔记本空空如也\n点击右上角 ⋮ 建立或导入笔记吧"
-                    setTextColor(Color.parseColor("#555555"))
-                    textSize = 14f
-                    gravity = android.view.Gravity.CENTER
-                    setLineSpacing(10f, 1.2f)
-                    setPadding(0, 100, 0, 100)
-                }
-                listContainer.addView(tvEmpty)
-                return
-            }
-
             for (i in 0 until array.length()) {
-                val item = array.getJSONObject(i)
-                val id = item.optString("id")
-                val title = item.optString("title")
-                val content = item.optString("content")
-                val timestamp = item.optString("timestamp", "刚刚")
+                notebookItems.add(array.getJSONObject(i))
+            }
+            if (notebookItems.isEmpty()) {
+                rvList.visibility = View.GONE
+                tvEmpty.visibility = View.VISIBLE
+            } else {
+                rvList.visibility = View.VISIBLE
+                tvEmpty.visibility = View.GONE
+            }
+        }
 
+        fun saveDataToPrefs() {
+            val newArray = org.json.JSONArray()
+            for (item in notebookItems) {
+                newArray.put(item)
+            }
+            sharedPrefs.edit().putString("kane_notebook_data", newArray.toString()).apply()
+        }
+
+        // ==========================================
+        // 🌟 核心升级 2：构建专用的适配器 (Adapter)
+        // ==========================================
+        // ==========================================
+        // 🌟 核心升级 2：构建专用的适配器 (带独立菜单按钮)
+        // ==========================================
+        class NotebookAdapter : androidx.recyclerview.widget.RecyclerView.Adapter<NotebookAdapter.ViewHolder>() {
+            inner class ViewHolder(val view: LinearLayout,
+                                   val tvItemTitle: TextView,
+                                   val tvItemTime: TextView,
+                                   val btnItemMore: TextView, // 👈 新增：右上角三个小点按钮
+                                   val tvItemContent: TextView,
+                                   val btnEdit: TextView,
+                                   val btnSend: TextView) : androidx.recyclerview.widget.RecyclerView.ViewHolder(view)
+
+            override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
                 val row = LinearLayout(context).apply {
                     orientation = LinearLayout.VERTICAL
                     setPadding((14 * density).toInt(), (10 * density).toInt(), (14 * density).toInt(), (10 * density).toInt())
@@ -3028,45 +3521,20 @@ class MainActivity : AppCompatActivity() {
                         setColor(Color.parseColor("#252526"))
                         cornerRadius = 15f
                     }
-                    layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+                    layoutParams = androidx.recyclerview.widget.RecyclerView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                         bottomMargin = (10 * density).toInt()
-                    }
-
-                    setOnClickListener {
-                        triggerVibration(30)
-                        dialog?.dismiss()
-                        onItemClicked(content)
-                    }
-
-                    setOnLongClickListener {
-                        triggerVibration(50)
-                        val options = arrayOf("📋 复制内容", "✏️ 编辑笔记", "❌ 删除条目")
-                        androidx.appcompat.app.AlertDialog.Builder(context)
-                            .setItems(options) { _, which ->
-                                when (which) {
-                                    0 -> copyToClipboard("笔记", content)
-                                    1 -> showEditNotebookDialog(id, title, content) { renderList() }
-                                    2 -> {
-                                        deleteNotebookEntry(id)
-                                        renderList()
-                                        triggerVibration(30)
-                                    }
-                                }
-                            }
-                            .show()
-                        true
                     }
                 }
 
                 val itemTitleRow = LinearLayout(context).apply {
                     orientation = LinearLayout.HORIZONTAL
+                    gravity = android.view.Gravity.CENTER_VERTICAL // 🌟 保证水平居中对齐
                     layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
                         bottomMargin = (4 * density).toInt()
                     }
                 }
 
                 val tvItemTitle = TextView(context).apply {
-                    text = title
                     setTextColor(Color.parseColor("#00E676"))
                     textSize = 15f
                     setTypeface(null, android.graphics.Typeface.BOLD)
@@ -3074,33 +3542,201 @@ class MainActivity : AppCompatActivity() {
                 }
 
                 val tvItemTime = TextView(context).apply {
-                    text = timestamp
                     setTextColor(Color.parseColor("#666666"))
                     textSize = 12f
-                    gravity = android.view.Gravity.END or android.view.Gravity.CENTER_VERTICAL
+                    setPadding(0, 0, (10 * density).toInt(), 0) // 🌟 距离右边的小点按钮留点空隙
+                }
+
+                // 🌟 新增：独立的三点菜单按钮
+                val btnItemMore = TextView(context).apply {
+                    text = "⋮"
+                    setTextColor(Color.parseColor("#888888"))
+                    textSize = 20f
+                    setTypeface(null, android.graphics.Typeface.BOLD)
+                    setPadding((8 * density).toInt(), (2 * density).toInt(), (8 * density).toInt(), (2 * density).toInt())
                 }
 
                 itemTitleRow.addView(tvItemTitle)
                 itemTitleRow.addView(tvItemTime)
+                itemTitleRow.addView(btnItemMore) // 👈 添加到标题行最右侧
 
                 val tvItemContent = TextView(context).apply {
-                    text = content
                     setTextColor(Color.parseColor("#AAAAAA"))
                     textSize = 13f
                     maxLines = 2
                     ellipsize = android.text.TextUtils.TruncateAt.END
                 }
 
+                val actionRow = LinearLayout(context).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = android.view.Gravity.END or android.view.Gravity.CENTER_VERTICAL
+                    layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+                        topMargin = (15 * density).toInt()
+                    }
+                }
+
+                val btnEdit = TextView(context).apply {
+                    text = "✍️ 查看 编辑"
+                    textSize = 12f
+                    setTextColor(Color.parseColor("#00E676"))
+                    setPadding((12 * density).toInt(), (6 * density).toInt(), (12 * density).toInt(), (6 * density).toInt())
+                    background = GradientDrawable().apply {
+                        setColor(Color.parseColor("#1A1A1B"))
+                        setStroke(2, Color.parseColor("#00E676"))
+                        cornerRadius = 30f
+                    }
+                    layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+                        marginEnd = (10 * density).toInt()
+                    }
+                }
+
+                val btnSend = TextView(context).apply {
+                    text = "🚀 翻译"
+                    textSize = 12f
+                    setTextColor(Color.parseColor("#00BCFF"))
+                    setPadding((12 * density).toInt(), (6 * density).toInt(), (12 * density).toInt(), (6 * density).toInt())
+                    background = GradientDrawable().apply {
+                        setColor(Color.parseColor("#1A1A1B"))
+                        setStroke(2, Color.parseColor("#00BCFF"))
+                        cornerRadius = 30f
+                    }
+                }
+
+                actionRow.addView(btnEdit)
+                actionRow.addView(btnSend)
+
                 row.addView(itemTitleRow)
                 row.addView(tvItemContent)
-                listContainer.addView(row)
+                row.addView(actionRow)
+
+                return ViewHolder(row, tvItemTitle, tvItemTime, btnItemMore, tvItemContent, btnEdit, btnSend)
             }
+
+            override fun onBindViewHolder(holder: ViewHolder, position: Int) {
+                val item = notebookItems[position]
+                val id = item.optString("id")
+                val title = item.optString("title")
+                val content = item.optString("content")
+
+                holder.tvItemTitle.text = title
+                holder.tvItemTime.text = item.optString("timestamp", "刚刚")
+                holder.tvItemContent.text = content
+
+                // 🌟 点击卡片空白处：智能填入或展开
+                holder.view.setOnClickListener {
+                    triggerVibration(30)
+                    dialog?.dismiss()
+                    if (currentTextInputDialog?.isShowing == true) {
+                        onItemClicked(content)
+                    } else {
+                        showTextInputDialog(content)
+                    }
+                }
+
+                // 🌟 新增：点击右上角三点菜单
+                holder.btnItemMore.setOnClickListener {
+                    triggerVibration(30)
+                    val options = arrayOf("📋 复制内容", "✏️ 编辑笔记", "❌ 删除条目")
+                    androidx.appcompat.app.AlertDialog.Builder(context)
+                        .setItems(options) { _, which ->
+                            when (which) {
+                                0 -> copyToClipboard("笔记", content)
+                                1 -> showEditNotebookDialog(id, title, content) { refreshList() }
+                                2 -> {
+                                    deleteNotebookEntry(id)
+                                    refreshList()
+                                    triggerVibration(30)
+                                }
+                            }
+                        }.show()
+                }
+
+                // 卡片底部的独立按钮
+                holder.btnEdit.setOnClickListener {
+                    triggerVibration(30)
+                    dialog?.dismiss()
+                    showTextInputDialog(content)
+                }
+
+                holder.btnSend.setOnClickListener {
+                    triggerVibration(40)
+                    dialog?.dismiss()
+                    currentTextInputDialog?.dismiss()
+                    processTextPipeline(content, isTop = false)
+                }
+            }
+
+            override fun getItemCount() = notebookItems.size
         }
 
-        // 🌟 核心绑定：在 renderList 本地函数生命完毕后，将真实的刷新逻辑挂载到“委托”上
-        refreshList = { renderList() }
+        val adapter = NotebookAdapter()
+        rvList.adapter = adapter
+        loadDataFromPrefs()
 
-        renderList()
+        // ==========================================
+        // 🌟 核心升级 3：纯净的长按拖拽重排 (剔除松手菜单)
+        // ==========================================
+        val itemTouchHelper = androidx.recyclerview.widget.ItemTouchHelper(object : androidx.recyclerview.widget.ItemTouchHelper.Callback() {
+            private var dragStartPosition = -1
+
+            override fun getMovementFlags(recyclerView: androidx.recyclerview.widget.RecyclerView, viewHolder: androidx.recyclerview.widget.RecyclerView.ViewHolder): Int {
+                val dragFlags = androidx.recyclerview.widget.ItemTouchHelper.UP or androidx.recyclerview.widget.ItemTouchHelper.DOWN
+                return makeMovementFlags(dragFlags, 0)
+            }
+
+            override fun onMove(recyclerView: androidx.recyclerview.widget.RecyclerView, viewHolder: androidx.recyclerview.widget.RecyclerView.ViewHolder, target: androidx.recyclerview.widget.RecyclerView.ViewHolder): Boolean {
+                val fromPos = viewHolder.adapterPosition
+                val toPos = target.adapterPosition
+                if (fromPos == -1 || toPos == -1) return false
+
+                java.util.Collections.swap(notebookItems, fromPos, toPos)
+                adapter.notifyItemMoved(fromPos, toPos)
+                return true
+            }
+
+            override fun onSwiped(viewHolder: androidx.recyclerview.widget.RecyclerView.ViewHolder, direction: Int) {}
+
+            override fun onSelectedChanged(viewHolder: androidx.recyclerview.widget.RecyclerView.ViewHolder?, actionState: Int) {
+                super.onSelectedChanged(viewHolder, actionState)
+                if (actionState == androidx.recyclerview.widget.ItemTouchHelper.ACTION_STATE_DRAG) {
+                    dragStartPosition = viewHolder?.adapterPosition ?: -1
+                    viewHolder?.itemView?.alpha = 0.8f
+                    viewHolder?.itemView?.scaleX = 1.02f
+                    viewHolder?.itemView?.scaleY = 1.02f
+                    triggerVibration(50)
+                }
+            }
+
+            override fun clearView(recyclerView: androidx.recyclerview.widget.RecyclerView, viewHolder: androidx.recyclerview.widget.RecyclerView.ViewHolder) {
+                super.clearView(recyclerView, viewHolder)
+                // 恢复落地后的原始大小和透明度
+                viewHolder.itemView.alpha = 1.0f
+                viewHolder.itemView.scaleX = 1.0f
+                viewHolder.itemView.scaleY = 1.0f
+
+                val dropPosition = viewHolder.adapterPosition
+
+                if (dropPosition != androidx.recyclerview.widget.RecyclerView.NO_POSITION) {
+                    // 🌟 核心修复：只管排序存储，不再干预点击和长按事件！
+                    if (dragStartPosition != dropPosition && dragStartPosition != -1) {
+                        saveDataToPrefs()
+                        triggerVibration(40)
+                    }
+                }
+                dragStartPosition = -1
+            }
+
+            override fun isLongPressDragEnabled(): Boolean {
+                return true
+            }
+        })
+
+        itemTouchHelper.attachToRecyclerView(rvList)
+
+        refreshList = {
+            loadDataFromPrefs()
+            adapter.notifyDataSetChanged()
+        }
 
         dialog = androidx.appcompat.app.AlertDialog.Builder(this)
             .setView(layout)
