@@ -1172,7 +1172,7 @@ class MainActivity : AppCompatActivity() {
 
         // 署名留白区
         val tvFooter = TextView(context).apply {
-            text = "Designed & Developed by KANE\nVer 5.3.2 Pro"
+            text = "Designed & Developed by KANE\nVer 5.3.3 Pro"
             setTextColor(Color.parseColor("#666666"))
             textSize = 12f
             gravity = android.view.Gravity.CENTER
@@ -2565,7 +2565,7 @@ class MainActivity : AppCompatActivity() {
         layout.addView(toggleRow)
 
         var overlayScale = 1.0f
-        val overlayViews = mutableListOf<TextView>()
+        val overlayViews = mutableListOf<StrokeTextView>()
 
         val fontControlRow = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -2653,30 +2653,90 @@ class MainActivity : AppCompatActivity() {
         }
         frameLayout.addView(imageView)
 
+        // 🌟 新增 1：字幕样式状态机 (0: 默认半透底板, 1: 极简高透底板, 2: 无底色纯文字描边)
+        var overlayStyleMode = 0
         var isShowingTranslated = true
 
         fun updateOverlayState() {
             for ((index, region) in regions.withIndex()) {
                 val tv = overlayViews.getOrNull(index) ?: continue
-                if (isShowingTranslated) {
-                    tv.text = region.translated
-                    tv.setTextColor(Color.WHITE)
-                    tv.background = GradientDrawable().apply {
-                        setColor(Color.parseColor("#E61A1A1B"))
-                        setStroke(3, Color.parseColor("#00E676"))
-                        cornerRadius = 8f
+
+                tv.text = if (isShowingTranslated) region.translated else region.original
+
+                // 每次重绘前，先清除可能残留的阴影和描边
+                tv.setShadowLayer(0f, 0f, 0f, Color.TRANSPARENT)
+                tv.setStroke(Color.TRANSPARENT, 0f) // 🌟 清除实体描边
+
+                when (overlayStyleMode) {
+                    0 -> {
+                        // 【模式 0：默认半透底板】
+                        if (isShowingTranslated) {
+                            tv.setTextColor(Color.WHITE)
+                            tv.background = GradientDrawable().apply {
+                                setColor(Color.parseColor("#E61A1A1B"))
+                                setStroke(3, Color.parseColor("#00E676"))
+                                cornerRadius = 8f
+                            }
+                        } else {
+                            tv.setTextColor(Color.parseColor("#00BCFF"))
+                            tv.background = GradientDrawable().apply {
+                                setColor(Color.parseColor("#99000000"))
+                                setStroke(3, Color.parseColor("#00BCFF"))
+                                cornerRadius = 8f
+                            }
+                        }
                     }
-                } else {
-                    tv.text = region.original
-                    tv.setTextColor(Color.parseColor("#00BCFF"))
-                    tv.background = GradientDrawable().apply {
-                        setColor(Color.parseColor("#99000000"))
-                        setStroke(3, Color.parseColor("#00BCFF"))
-                        cornerRadius = 8f
+                    1 -> {
+                        // 【模式 1：极简高透底板】
+                        if (isShowingTranslated) {
+                            tv.setTextColor(Color.WHITE)
+                            tv.background = GradientDrawable().apply {
+                                setColor(Color.parseColor("#661A1A1B"))
+                                setStroke(2, Color.parseColor("#8800E676"))
+                                cornerRadius = 8f
+                            }
+                        } else {
+                            tv.setTextColor(Color.parseColor("#00BCFF"))
+                            tv.background = GradientDrawable().apply {
+                                setColor(Color.parseColor("#44000000"))
+                                setStroke(2, Color.parseColor("#8800BCFF"))
+                                cornerRadius = 8f
+                            }
+                        }
+                        tv.setShadowLayer(2f, 0f, 0f, Color.BLACK)
+                    }
+                    2 -> {
+                        // 【模式 2：黑边 (羽化实体描边)】
+                        if (isShowingTranslated) {
+                            tv.setTextColor(Color.parseColor("#00E676"))
+                        } else {
+                            tv.setTextColor(Color.parseColor("#00BCFF"))
+                        }
+                        tv.background = null
+                        tv.setStroke(Color.BLACK, 3f) // 5f 的底层实体硬边
+                        // 🌟 核心：加上 3f 的纯黑光晕，让实体硬边的最外圈产生细腻的羽化过渡
+                        tv.setShadowLayer(3f, 0f, 0f, Color.BLACK)
+                    }
+                    3 -> {
+                        // 【模式 3：红字白边】
+                        tv.setTextColor(Color.parseColor("#FF3333"))
+                        tv.background = null
+                        tv.setStroke(Color.WHITE, 5f)
+                        // 🌟 羽化：加上纯白色的光晕
+                        tv.setShadowLayer(3f, 0f, 0f, Color.WHITE)
+                    }
+                    4 -> {
+                        // 【模式 4：白字红边】
+                        tv.setTextColor(Color.WHITE)
+                        tv.background = null
+                        tv.setStroke(Color.parseColor("#FF3333"), 3f)
+                        // 🌟 羽化：加上亮红色的光晕
+                        tv.setShadowLayer(4f, 0f, 0f, Color.parseColor("#FF3333"))
                     }
                 }
             }
 
+            // 保持按钮切换逻辑不变
             if (isShowingTranslated) {
                 btnTranslated.setTextColor(Color.WHITE)
                 (btnTranslated.background as GradientDrawable).setColor(Color.parseColor("#00E676"))
@@ -2700,6 +2760,23 @@ class MainActivity : AppCompatActivity() {
             triggerVibration(30)
             isShowingTranslated = false
             updateOverlayState()
+        }
+        // 👇 粘贴到这里的 imageView 点击事件
+        imageView.setOnClickListener {
+            triggerVibration(20)
+            // 🌟 修改：将 % 3 改为 % 5，支持在 5 种模式之间循环切换
+            overlayStyleMode = (overlayStyleMode + 1) % 5
+            updateOverlayState()
+
+            // 🌟 修改：增加了新模式的提示文案
+            val modeName = arrayOf(
+                "🎨 默认背景",
+                "🎨 高透背景",
+                "🎨 无背景(黑边)",
+                "🎨 红字白边",
+                "🎨 白字红边"
+            )[overlayStyleMode]
+            Toast.makeText(context, modeName, Toast.LENGTH_SHORT).show()
         }
 
         btnCopyAll.setOnClickListener {
@@ -2807,7 +2884,7 @@ class MainActivity : AppCompatActivity() {
                 val right = offsetX + (region.xmax / 1000f) * trueImgWidth
                 val bottom = offsetY + (region.ymax / 1000f) * trueImgHeight
 
-                val tvOverlay = TextView(context).apply {
+                val tvOverlay = StrokeTextView(context).apply {
                     // 🌟 核心破壁：宽度和高度全都释放为 WRAP_CONTENT！让文字自己决定需要多大空间！
                     layoutParams = FrameLayout.LayoutParams(
                         FrameLayout.LayoutParams.WRAP_CONTENT,
@@ -4075,5 +4152,53 @@ class MainActivity : AppCompatActivity() {
             }
             .setNegativeButton("取消", null)
             .show()
+    }
+
+}
+// 🌟 放在 MainActivity.kt 文件的绝对最末尾
+class StrokeTextView(context: Context) : androidx.appcompat.widget.AppCompatTextView(context) {
+    private var strokeColor = android.graphics.Color.TRANSPARENT
+    private var strokeWidthSize = 0f
+    private var isDrawing = false // 增加一个状态锁
+
+    fun setStroke(color: Int, width: Float) {
+        strokeColor = color
+        strokeWidthSize = width
+        invalidate()
+    }
+
+    // 🌟 拦截刷新机制，防止因为在 onDraw 里改变颜色导致死循环崩溃
+    override fun invalidate() {
+        if (!isDrawing) super.invalidate()
+    }
+
+    override fun onDraw(canvas: android.graphics.Canvas) {
+        if (strokeColor != android.graphics.Color.TRANSPARENT && strokeWidthSize > 0) {
+            isDrawing = true // 锁住状态
+
+            val originalColor = currentTextColor
+            val p = paint
+            val originalStyle = p.style
+            val originalStrokeWidth = p.strokeWidth
+
+            // 1. 画外圈实体描边
+            p.style = android.graphics.Paint.Style.STROKE
+            p.strokeWidth = strokeWidthSize
+            p.strokeJoin = android.graphics.Paint.Join.ROUND // 🌟 让描边圆润，防止字母的直角产生尖刺
+            p.strokeMiter = 10f
+            setTextColor(strokeColor) // 🌟 骗过系统：临时把字体颜色变成描边颜色
+            super.onDraw(canvas)
+
+            // 2. 画内部实心文字
+            p.style = android.graphics.Paint.Style.FILL
+            p.strokeWidth = originalStrokeWidth
+            setTextColor(originalColor) // 🌟 恢复：把字体颜色变回真实颜色
+            super.onDraw(canvas)
+
+            p.style = originalStyle
+            isDrawing = false // 解锁
+        } else {
+            super.onDraw(canvas)
+        }
     }
 }
