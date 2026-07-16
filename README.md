@@ -1,5 +1,5 @@
 <!-- 基础信息行 -->
-![Release](https://img.shields.io/badge/release-v5.3.3-green.svg)
+![Release](https://img.shields.io/badge/release-v5.4.0-green.svg)
 ![Platform](https://img.shields.io/badge/Platform-Android_9.0%2B_%28API_28%2B%29-3DDC84.svg?logo=android&logoColor=white)
 ![Language](https://img.shields.io/badge/Language-Kotlin-7F52FF.svg?logo=kotlin&logoColor=white)
 ![License](https://img.shields.io/badge/License-MIT-blue.svg)
@@ -17,7 +17,9 @@
 ### ✨ 核心亮点：
 - **🎙️ 双向极速对讲**：长按即说，松开即译，专为面对面无障碍沟通设计。
 - **👁️ 视觉拍照破译**：利用内置相机拍照并圈选文字，AI 自动进行 OCR 提取并高保真翻译，还支持直接朗读。
-- **📱 赛博全屏大字报**：双击翻译气泡即可唤出高对比度大字展示，支持双指缩放，方便展示给对方看。
+- **🗣️ 同声翻译**：按住“同传”按钮即可启动，它能一边听对方说话，一边在后台实时翻译并同步播放声音。不需要像以前那样“说完一整句话，然后等它翻译、播放”，而是能做到真正的“一边说一边翻译”。 
+             ⚠️ 注意： 使用【同传】功能时，请务必佩戴耳机！ 目前同传功能主要是针对于把“对方语言”实时翻译成“我方语言”，实时翻译的结果音频流总是从耳机播放。 
+- **📱 全屏大字报**：双击翻译气泡即可唤出高对比度大字展示，支持双指缩放，方便展示给对方看。
 - **🛡️ 幻听防火墙**：内置底噪过滤算法，自动屏蔽 AI 偶尔产生的“幻觉字幕”，100% 净化对话流。
 - 
 注意，初次安装需要打开设置版面，有3处需要填写，软件才能正常工作。你需要自己申请API（免费的），暗号需要找KANE获取。
