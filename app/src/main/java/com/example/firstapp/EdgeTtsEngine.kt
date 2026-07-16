@@ -86,8 +86,11 @@ class EdgeTtsEngine(context: Context, private val fallbackTts: TextToSpeech) {
     val isSpeaking: Boolean get() = mediaPlayer?.isPlaying == true || fallbackTts.isSpeaking
 
     fun stop() {
-        // 🌟 航天级加固 2：只要调用 stop，旧身份证瞬间作废，之前所有的网络请求就算回来了也会被直接丢弃！
+        // 🌟 航天级加固 2：只要调用 stop，旧身份证瞬间作废
         sessionCounter.incrementAndGet()
+
+        // 🌟 终极防线：每次播报结束/被掐断时，立刻摘除“隐私锁”，绝不把底层的幽灵状态留给下一个动作！
+        isPrivacyModeActive = false
 
         currentCall?.cancel()
         currentCall = null

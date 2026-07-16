@@ -277,18 +277,18 @@ class MainActivity : AppCompatActivity() {
         // 🌟 变色龙音量条：滑动拖拽逻辑
         seekbarTtsVolume.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
-                // 👇 替换从这里开始：消除生物微颤，硬件自适应齿轮化
                 if (fromUser && seekBar != null) {
                     val am = getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
 
-                    if (edgeTts.actualSpeakerRoute) { // 🌟 改为 actualSpeakerRoute
+                    // 🌟 核心修复 1：闲置拖拽必须严格跟随 UI 的物理拨动开关，绝不理会底层的隐私覆写状态！
+                    if (edgeTts.isSpeakerRoute) {
                         // 【🔈 外放模式】根据这台手机真实的闹钟档位，切分 100%
                         val maxAlarmVol = am.getStreamMaxVolume(android.media.AudioManager.STREAM_ALARM)
                         val stepSize = 100f / maxAlarmVol
                         val hardwareGear = Math.round(progress / stepSize) // 四舍五入到最近的物理档位
                         val snappedProgress = (hardwareGear * stepSize).toInt().coerceIn(0, 100)
 
-                        seekBar.progress = snappedProgress // 强制吸附，此时 fromUser 为 false 不会死循环
+                        seekBar.progress = snappedProgress // 强制吸附
                         edgeTts.speakerVolume = snappedProgress // 更新内存安全预设值
 
                         if (edgeTts.isSpeaking) {
@@ -313,7 +313,6 @@ class MainActivity : AppCompatActivity() {
                         setIslandState("🎧 TTS耳机音量：$snappedProgress%", "#00E676", animatePop = false, isTop = false)
                     }
                 }
-                // 👆 替换到这里结束
             }
 
             override fun onStartTrackingTouch(seekBar: SeekBar?) {
@@ -323,8 +322,9 @@ class MainActivity : AppCompatActivity() {
             override fun onStopTrackingTouch(seekBar: SeekBar?) {
                 if (seekBar != null) {
                     triggerVibration(30)
-                    if (edgeTts.actualSpeakerRoute) { // 🌟 改为 actualSpeakerRoute
-                        // 🌟 外放模式：松手时才将安全预设值写进硬盘，杜绝卡顿！
+                    // 🌟 核心修复 2：这里同样必须严格跟随 UI 物理开关
+                    if (edgeTts.isSpeakerRoute) {
+                        // 外放模式：松手时才将安全预设值写进硬盘，杜绝卡顿！
                         sharedPrefs.edit().putInt("tts_speaker_volume", seekBar.progress).apply()
                         if (edgeTts.isSpeaking) {
                             setIslandState("🔊   正在播报   ⏹️ ", "#00FF00", animatePop = false, isTop = false)
@@ -332,7 +332,7 @@ class MainActivity : AppCompatActivity() {
                             resetIslandDelayed(1500L)
                         }
                     } else {
-                        // 耳机模式无需存盘，安卓系统自带蓝牙记忆，1.5秒后灵动岛复原即可
+                        // 耳机模式无需存盘，安卓系统自带蓝牙记忆
                         resetIslandDelayed(1500L)
                     }
                 }
