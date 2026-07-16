@@ -40,21 +40,88 @@
             app:layout_constraintTop_toTopOf="parent"
             app:layout_constraintBottom_toBottomOf="parent"
             app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintEnd_toStartOf="@+id/btn_top_mic" />
+            app:layout_constraintEnd_toStartOf="@+id/ll_top_controls" />
 
-        <TextView
-            android:id="@+id/btn_top_mic"
-            android:layout_width="48dp"
-            android:layout_height="48dp"
-            android:layout_marginBottom="50dp"
+        <!-- ================= 🌟 左侧阵列：智能自适应控制列 (极简无加减号版) ================= -->
+        <LinearLayout
+            android:id="@+id/ll_top_controls"
+            android:layout_width="wrap_content"
+            android:layout_height="0dp"
+            android:orientation="vertical"
+            android:gravity="center_horizontal"
             android:layout_marginEnd="15dp"
-            android:gravity="center"
-            android:text="🎙️\n英"
-            android:textColor="#00BCFF"
-            android:textSize="13sp"
-            android:textStyle="bold"
+            android:clipChildren="false"
+            android:clipToPadding="false"
+            app:layout_constraintTop_toTopOf="parent"
             app:layout_constraintBottom_toBottomOf="parent"
-            app:layout_constraintEnd_toEndOf="parent" />
+            app:layout_constraintEnd_toEndOf="parent">
+
+            <!-- 1. 同传按钮 (物理顶部，视觉中心线) -->
+            <TextView
+                android:id="@+id/btn_live_translate"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:layout_marginTop="16dp"
+                android:gravity="center"
+                android:text="同\n传"
+                android:textColor="#FF4444"
+                android:textSize="13sp"
+                android:textStyle="bold"
+                android:rotation="180" />
+
+            <!-- 🌟 弹簧空间：完美撑开同传按钮和下方的音量组件 -->
+            <Space
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1" />
+
+            <!-- 2. 🎚️ 极简音量条容器 (强制锁定 100dp，无加减号) -->
+            <FrameLayout
+                android:layout_width="40dp"
+                android:layout_height="100dp"
+                android:layout_marginBottom="20dp"
+                android:clipChildren="false">
+
+                <SeekBar
+                    android:id="@+id/seekbar_tts_volume"
+                    android:layout_width="100dp"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="center"
+                    android:max="100"
+                    android:progress="100"
+                    android:progressTint="#00BCFF"
+                    android:thumbTint="#00BCFF"
+                    android:rotation="90" />
+            </FrameLayout>
+
+            <!-- 3. 🔈 外放/耳机切换 -->
+            <TextView
+                android:id="@+id/btn_tts_route"
+                android:layout_width="38dp"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="25dp"
+                android:gravity="center"
+                android:paddingTop="12dp"
+                android:paddingBottom="12dp"
+                android:text="🔈\n外\n放"
+                android:textColor="#00BCFF"
+                android:textSize="12sp"
+                android:textStyle="bold"
+                android:lineSpacingExtra="2dp"
+                android:rotation="180" />
+
+            <!-- 4. 🎙️ 麦克风 (物理底部，视觉屏幕顶端) -->
+            <TextView
+                android:id="@+id/btn_top_mic"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:layout_marginBottom="15dp"
+                android:gravity="center"
+                android:text="🎙️\n英"
+                android:textColor="#00BCFF"
+                android:textSize="13sp"
+                android:textStyle="bold" />
+        </LinearLayout>
     </androidx.constraintlayout.widget.ConstraintLayout>
 
     <!-- ================== 下半屏 (我方：正常显示) ================== -->

@@ -29,6 +29,10 @@ import java.util.*
 
 class MainActivity : AppCompatActivity() {
 
+    private lateinit var btnLiveTranslate: TextView
+    private var geminiLiveEngine: GeminiLiveEngine? = null
+    private var isCurrentlyRecordingClassic = false // 记录我方当前是否正在进行传统的录音或处理
+    private var isLiveTranslateEnabled = false // 记录同传模式是否开启
     private lateinit var btnTopMic: TextView
     private lateinit var btnBottomMic: TextView
     private lateinit var tvDynamicIsland: TextView
@@ -36,6 +40,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnSwap: TextView
     private lateinit var btnClear: TextView
     private lateinit var btnKeyboard: TextView
+    private lateinit var btnTtsRoute: TextView
+    private lateinit var seekbarTtsVolume: SeekBar
 
     private lateinit var btnMainCamera: TextView
     private lateinit var btnSubCamera: TextView
@@ -93,6 +99,14 @@ class MainActivity : AppCompatActivity() {
     private var killerSet = mutableSetOf<String>()
 
     private var isProcessingAudio = false
+    // 🌟 新增：单线程任务队列，专门处理吃内存的脏活累活，防止并发把内存撑爆
+    private val heavyTaskExecutor = java.util.concurrent.Executors.newSingleThreadExecutor()
+
+    // 🌟 新增：同传专用的软 PTT 记忆体
+    private var liveEngineIdleRunnable: Runnable? = null
+    private var currentLiveMsgId: String = ""
+    private var currentLiveInputText: String = ""
+    private var currentLiveOutputText: String = ""
 
     private var myLangName = "中文"
     private var ptLangName = "英语"
@@ -118,7 +132,15 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
+        val tempPrefs = getSharedPreferences("KaneAiPrefs", Context.MODE_PRIVATE)
+        val will = tempPrefs.getInt("volume_will", -1)
+        if (will != -1) {
+            // 读取遗书，判断上次崩溃前我们篡改的是哪个音频流，精准复原！
+            val streamType = tempPrefs.getInt("stream_will", android.media.AudioManager.STREAM_MUSIC)
+            val am = getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
+            am.setStreamVolume(streamType, will, 0)
+            tempPrefs.edit().remove("volume_will").remove("stream_will").apply()
+        }
         // 1. 告诉系统我们要接管全屏布局
         WindowCompat.setDecorFitsSystemWindows(window, false)
 
@@ -138,6 +160,8 @@ class MainActivity : AppCompatActivity() {
         vibrator = getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
         fallbackTts = android.speech.tts.TextToSpeech(this) {}
         edgeTts = EdgeTtsEngine(this, fallbackTts)
+        // 👇 注入这行：把系统的麦克风控制权交给我们的录音器
+        audioProcessor.audioManager = getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
         // 🌟 新增：App开机时，兵分两路：一路去拉取更新缓存列表，另一路直接Ping上次存好的列表
         fetchTtsNodesSilently()
 
@@ -148,6 +172,328 @@ class MainActivity : AppCompatActivity() {
         edgeTts.pingServer()
 
         btnTopMic = findViewById(R.id.btn_top_mic)
+
+        btnLiveTranslate = findViewById(R.id.btn_live_translate)
+
+        // 🌟 1. 启动时先根据耳机状态刷一次颜色 (智能变色替代了写死的金光)
+        updateLiveTranslateButtonUI()
+
+        // 🌟 2. 注册系统级硬件监听器 (耳机/蓝牙插拔时，瞬间自动变色！)
+        val audioManager = getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
+        audioManager.registerAudioDeviceCallback(object : android.media.AudioDeviceCallback() {
+            override fun onAudioDevicesAdded(addedDevices: Array<out android.media.AudioDeviceInfo>?) {
+                runOnUiThread { updateLiveTranslateButtonUI() }
+            }
+            override fun onAudioDevicesRemoved(removedDevices: Array<out android.media.AudioDeviceInfo>?) {
+                runOnUiThread {
+                    updateLiveTranslateButtonUI()
+
+                    // 🌟 核心破局：如果用户拔掉了耳机，且当前处于“耳机模式”，强行踢回外放模式！
+                    if (!edgeTts.isSpeakerRoute && !isHeadsetPluggedIn()) {
+                        // 模拟手指去按一下路由切换按钮，触发完美切换（自动还原音量及UI）
+                        btnTtsRoute.performClick()
+                        showTransientIslandMessage("⚠️ 耳机已断开，发音自动切回喇叭", "#FFA500", isTop = false)
+                    }
+                }
+            }
+        }, null)
+
+        // 🌟 3. 新增一个幽灵事件拦截器变量
+        var isValidLivePress = false
+
+        // 🌟 初始化 TTS 路由开关与音量条
+        btnTtsRoute = findViewById(R.id.btn_tts_route)
+        seekbarTtsVolume = findViewById(R.id.seekbar_tts_volume)
+
+        btnTtsRoute.background = GradientDrawable().apply {
+            setColor(Color.parseColor("#1A1A1B"))
+            setStroke(2, Color.parseColor("#00BCFF"))
+            cornerRadius = 50f // 🌟 变成完美的竖向椭圆胶囊
+        }
+
+        // 路由开关逻辑
+        btnTtsRoute.setOnClickListener {
+            // 🌟 核心拦截：如果当前是外放，且想切到耳机，但根本没插耳机，严禁通行！
+            if (edgeTts.isSpeakerRoute && !isHeadsetPluggedIn()) {
+                triggerVibration(20)
+                Toast.makeText(this@MainActivity, "⚠️ 请连接耳机或蓝牙设备", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+
+            triggerVibration(30)
+            edgeTts.isSpeakerRoute = !edgeTts.isSpeakerRoute // 状态反转
+            edgeTts.switchRouteOnTheFly() // 瞬间干预底层
+
+            val am = getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
+            val maxVol = am.getStreamMaxVolume(android.media.AudioManager.STREAM_MUSIC)
+
+            if (edgeTts.isSpeakerRoute) {
+                // 👇 替换从这里开始：动态硬件齿轮初始化
+                btnTtsRoute.text = "🔈\n外\n放"
+                btnTtsRoute.setTextColor(Color.parseColor("#00BCFF"))
+                (btnTtsRoute.background as GradientDrawable).setStroke(2, Color.parseColor("#00BCFF"))
+
+                seekbarTtsVolume.visibility = View.VISIBLE
+                seekbarTtsVolume.isEnabled = true
+
+                // 🌟 动态重构这台手机专属的磁吸点
+                val am = getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
+                val maxAlarmVol = am.getStreamMaxVolume(android.media.AudioManager.STREAM_ALARM)
+                val stepSize = 100f / maxAlarmVol
+                val hardwareGear = Math.round(edgeTts.speakerVolume / stepSize)
+                val snappedProgress = (hardwareGear * stepSize).toInt().coerceIn(0, 100)
+
+                seekbarTtsVolume.progress = snappedProgress
+                edgeTts.speakerVolume = snappedProgress // 同步矫正内存误差
+
+                seekbarTtsVolume.progressTintList = android.content.res.ColorStateList.valueOf(Color.parseColor("#00BCFF"))
+                seekbarTtsVolume.thumbTintList = android.content.res.ColorStateList.valueOf(Color.parseColor("#00BCFF"))
+
+                showTransientIslandMessage("🔈 TTS外放模式，音量：$snappedProgress%", "#00BCFF", isTop = false)
+                // 👆 替换到这里结束
+            } else {
+                // ==========================================
+                // 【🎧 耳机模式：真实物理同步】
+                // ==========================================
+                btnTtsRoute.text = "🎧\n耳\n机"
+                btnTtsRoute.setTextColor(Color.parseColor("#00E676"))
+                (btnTtsRoute.background as GradientDrawable).setStroke(2, Color.parseColor("#00E676"))
+
+                seekbarTtsVolume.visibility = View.VISIBLE // 🌟 不再隐藏！保留在屏幕上作为真实指示器
+                seekbarTtsVolume.isEnabled = true
+
+                // 🌟 瞬间跳变回：系统真实的耳机媒体音量
+                val currentVol = am.getStreamVolume(android.media.AudioManager.STREAM_MUSIC)
+                seekbarTtsVolume.progress = ((currentVol.toFloat() / maxVol) * 100).toInt()
+
+                // 变成暗灰色（代表已被系统接管）
+                seekbarTtsVolume.progressTintList = android.content.res.ColorStateList.valueOf(Color.parseColor("#00E676"))
+                seekbarTtsVolume.thumbTintList = android.content.res.ColorStateList.valueOf(Color.parseColor("#00E676"))
+
+                showTransientIslandMessage("🎧 TTS耳机模式，音量：${seekbarTtsVolume.progress}%", "#00E676", isTop = false)
+            }
+        }
+
+        // 🌟 变色龙音量条：滑动拖拽逻辑
+        seekbarTtsVolume.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                // 👇 替换从这里开始：消除生物微颤，硬件自适应齿轮化
+                if (fromUser && seekBar != null) {
+                    val am = getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
+
+                    if (edgeTts.actualSpeakerRoute) { // 🌟 改为 actualSpeakerRoute
+                        // 【🔈 外放模式】根据这台手机真实的闹钟档位，切分 100%
+                        val maxAlarmVol = am.getStreamMaxVolume(android.media.AudioManager.STREAM_ALARM)
+                        val stepSize = 100f / maxAlarmVol
+                        val hardwareGear = Math.round(progress / stepSize) // 四舍五入到最近的物理档位
+                        val snappedProgress = (hardwareGear * stepSize).toInt().coerceIn(0, 100)
+
+                        seekBar.progress = snappedProgress // 强制吸附，此时 fromUser 为 false 不会死循环
+                        edgeTts.speakerVolume = snappedProgress // 更新内存安全预设值
+
+                        if (edgeTts.isSpeaking) {
+                            // 🌟 AI 在说话，直接击穿底层，改变真实闹钟音量！
+                            am.setStreamVolume(android.media.AudioManager.STREAM_ALARM, hardwareGear, 0)
+                            setIslandState("🔊 TTS音量: $snappedProgress%   ⏹️ ", "#00FF00", animatePop = false, isTop = false)
+                        } else {
+                            // 闲置时，绝不碰底层，只显示进度
+                            setIslandState("🔈 TTS外放音量：$snappedProgress%", "#00BCFF", animatePop = false, isTop = false)
+                        }
+                    } else {
+                        // 【🎧 耳机模式】映射真实的媒体档位
+                        val maxMusicVol = am.getStreamMaxVolume(android.media.AudioManager.STREAM_MUSIC)
+                        val stepSize = 100f / maxMusicVol
+                        val hardwareGear = Math.round(progress / stepSize)
+                        val snappedProgress = (hardwareGear * stepSize).toInt().coerceIn(0, 100)
+
+                        seekBar.progress = snappedProgress
+
+                        // 强行改变系统媒体音量
+                        am.setStreamVolume(android.media.AudioManager.STREAM_MUSIC, hardwareGear, 0)
+                        setIslandState("🎧 TTS耳机音量：$snappedProgress%", "#00E676", animatePop = false, isTop = false)
+                    }
+                }
+                // 👆 替换到这里结束
+            }
+
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {
+                triggerVibration(20)
+            }
+
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {
+                if (seekBar != null) {
+                    triggerVibration(30)
+                    if (edgeTts.actualSpeakerRoute) { // 🌟 改为 actualSpeakerRoute
+                        // 🌟 外放模式：松手时才将安全预设值写进硬盘，杜绝卡顿！
+                        sharedPrefs.edit().putInt("tts_speaker_volume", seekBar.progress).apply()
+                        if (edgeTts.isSpeaking) {
+                            setIslandState("🔊   正在播报   ⏹️ ", "#00FF00", animatePop = false, isTop = false)
+                        } else {
+                            resetIslandDelayed(1500L)
+                        }
+                    } else {
+                        // 耳机模式无需存盘，安卓系统自带蓝牙记忆，1.5秒后灵动岛复原即可
+                        resetIslandDelayed(1500L)
+                    }
+                }
+            }
+        })
+
+        // 🌟 全新重构：同传软 PTT 控制中心 (按住解禁，松开静音，3分钟断网)
+        btnLiveTranslate.setOnTouchListener { _, event ->
+            val bg = btnLiveTranslate.background as GradientDrawable
+
+            when (event.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    if (!checkAudioPermission()) {
+                        requestAudioPermission()
+                        return@setOnTouchListener true
+                    }
+                    if (!isHeadsetPluggedIn()) {
+                        triggerVibration(20) // 🌟 新增：拔掉耳机时按它，给个清脆的短震动提示
+                        Toast.makeText(this@MainActivity, "⚠️ 请佩戴耳机", Toast.LENGTH_SHORT).show()
+                        isValidLivePress = false // 🚫 标记为无效按压！
+                        return@setOnTouchListener true
+                    }
+
+                    isValidLivePress = true // ✅ 标记为有效按压！
+                    triggerVibration(50)
+
+                    // 🌟 视觉升级：按下时爆闪为炽热的高亮金
+                    bg.setStroke(8, Color.parseColor("#FFFF00")) // 边框加粗变亮金/高光黄
+                    bg.setColor(Color.parseColor("#332B00"))     // 内部核心微微透出暗金光泽
+                    btnLiveTranslate.setShadowLayer(20f, 0f, 0f, Color.parseColor("#FFFF00")) // 光晕猛烈爆闪
+
+                    btnLiveTranslate.animate().scaleX(0.85f).scaleY(0.85f).setDuration(150).start()
+
+                    // 取消休眠倒计时
+                    liveEngineIdleRunnable?.let { tvDynamicIsland.removeCallbacks(it) }
+
+                    // 🌟 终极防线：双重校验，如果 UI 引用还在但底层网络已死，强行超度，准备冷启动！
+                    if (geminiLiveEngine != null && !geminiLiveEngine!!.isActive) {
+                        geminiLiveEngine?.stop()
+                        geminiLiveEngine = null
+                    }
+
+                    // 如果引擎是空的，冷启动连网
+                    if (geminiLiveEngine == null) {
+                        val geminiKey = sharedPrefs.getString("gemini_key", "") ?: ""
+                        val geminiLiveModel = sharedPrefs.getString("gemini_live_model", "gemini-3.5-live-translate-preview") ?: "gemini-3.5-live-translate-preview"
+                        if (geminiKey.isBlank()) {
+                            Toast.makeText(this@MainActivity, "⛔ 请先在设置里填写 Gemini API Key", Toast.LENGTH_SHORT).show()
+                            return@setOnTouchListener true
+                        }
+
+                        setIslandState("⏳ 正在接通同传通道...", "#00BCFF", isTop = false)
+
+                        geminiLiveEngine = GeminiLiveEngine(
+                            context = this@MainActivity, apiKey = geminiKey, modelName = geminiLiveModel,
+                            sourceLang = ptLangName, targetLang = myLangName,
+                            onStateChange = { stateText ->
+                                setIslandState(stateText, "#00BCFF", isTop = false)
+                                // 🌟 修复点：吸收那个 AI 的思路，补齐 "休眠", "关闭" 拦截！只要断线，必定设为 null
+                                if (stateText.contains("异常") || stateText.contains("断开") || stateText.contains("休眠") || stateText.contains("关闭")) {
+                                    geminiLiveEngine?.stop()
+                                    geminiLiveEngine = null
+                                } else {
+                                    isLiveTranslateEnabled = true
+                                }
+                            },
+                            onSubtitleUpdate = { input, output ->
+                                // 🌟 智能气泡引擎：如果当前 ID 是空的，自动新建一个气泡！
+                                if (currentLiveMsgId.isEmpty()) {
+                                    currentLiveMsgId = java.util.UUID.randomUUID().toString()
+                                    currentLiveInputText = ""
+                                    currentLiveOutputText = ""
+                                    val voiceId = getSmartVoiceId(myVoiceName, myLangName)
+                                    topAdapter.addMessage(ChatMessage("...", "...", isMe = true, voiceId = voiceId, isTopSpeaker = true, id = currentLiveMsgId))
+                                    bottomAdapter.addMessage(ChatMessage("...", "...", isMe = false, voiceId = voiceId, isTopSpeaker = true, id = currentLiveMsgId))
+                                }
+
+                                if (input.isNotEmpty()) currentLiveInputText += input
+                                if (output.isNotEmpty()) currentLiveOutputText += output
+
+                                val displayText = currentLiveOutputText.ifEmpty { "..." }
+                                val origText = currentLiveInputText.ifEmpty { "..." }
+
+                                topAdapter.updateMessageById(currentLiveMsgId, displayText, origText)
+                                bottomAdapter.updateMessageById(currentLiveMsgId, displayText, origText)
+
+                                // 🌟 核心物理修复：使用带偏移量的吸附滚动，绝对保证上半屏气泡牢牢咬住灵动岛边缘，绝不被推出版图！
+                                (rvTopChat.layoutManager as LinearLayoutManager).scrollToPositionWithOffset(topAdapter.itemCount - 1, 0)
+                                rvBottomChat.scrollToPosition(bottomAdapter.itemCount - 1)
+                            },
+                            onTurnComplete = {
+                                // 🌟 核心修复 3：不再在这里清空 ID！
+                                // 允许延时到达的最后一点字幕，继续安全落入刚才松手时的气泡中。
+                                // 直到下一次按下手指，再由 ACTION_DOWN 去建立全新气泡。
+                            }
+                        )
+                        geminiLiveEngine?.start()
+                    } else {
+                        // 引擎还活着且网络畅通，热启动！瞬间解开麦克风
+                        setIslandState("👂正在听对方...", "#00BCFF", isTop = false)
+                        geminiLiveEngine?.resumeCapture()
+                    }
+
+                    // 🌟 核心修复 1：手指按下时，无条件强制生成新气泡，彻底掐断上一个回合！
+                    currentLiveMsgId = java.util.UUID.randomUUID().toString()
+                    currentLiveInputText = ""
+                    currentLiveOutputText = ""
+                    val voiceId = getSmartVoiceId(myVoiceName, myLangName)
+
+                    topAdapter.addMessage(ChatMessage("...", "...", isMe = true, voiceId = voiceId, isTopSpeaker = true, id = currentLiveMsgId))
+                    bottomAdapter.addMessage(ChatMessage("...", "...", isMe = false, voiceId = voiceId, isTopSpeaker = true, id = currentLiveMsgId))
+
+                    (rvTopChat.layoutManager as LinearLayoutManager).scrollToPositionWithOffset(topAdapter.itemCount - 1, 0)
+                    rvBottomChat.scrollToPosition(bottomAdapter.itemCount - 1)
+
+                    true
+                }
+
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    // 👇 🌟 核心拦截机制：如果刚才判定为无效按压（没插耳机），直接截断，不做任何多余的动作！
+                    if (!isValidLivePress) return@setOnTouchListener true
+
+                    // 🌟 视觉升级：松手恢复智能状态（插着耳机就是金光，拔掉就是灰暗）
+                    updateLiveTranslateButtonUI()
+
+                    btnLiveTranslate.animate().scaleX(1.0f).scaleY(1.0f).setDuration(250).start()
+
+                    // 仅仅是捂住麦克风，不断网
+                    geminiLiveEngine?.pauseCapture()
+                    // 🌟 核心修复 2：告诉大模型“我说完了，赶紧结算”，掐断上下文粘连
+                    geminiLiveEngine?.commitTurn()
+
+                    // 👇 🌟 新增代码：阅后即焚（无情清理无效的短暂空录音气泡）
+                    if (currentLiveInputText.isEmpty() && currentLiveOutputText.isEmpty()) {
+                        topAdapter.removeMessageById(currentLiveMsgId)
+                        bottomAdapter.removeMessageById(currentLiveMsgId)
+
+                        // 🌟 致命 Bug 修复：气泡烧毁了，必须把它的 ID 从记忆体里抹除！
+                        // 否则下次按键会把字幕发给幽灵气泡，导致界面完全无响应！
+                        currentLiveMsgId = ""
+                    }
+                    // 👆 新增结束
+                    // 🌟 核心修复 4：暂停提示面向我方正向显示
+                    setIslandState("⏸️ 暂停同传", "#888888", isTop = false)
+                    resetIslandDelayed(2000L)
+
+                    // 🌟 开启 3 分钟断网休眠机制
+                    liveEngineIdleRunnable = Runnable {
+                        geminiLiveEngine?.stop()
+                        geminiLiveEngine = null
+                        isLiveTranslateEnabled = false
+                        // 🌟 核心修复 5：休眠提示面向我方正向显示
+                        showTransientIslandMessage("💤 同传已自动休眠", "#888888", isTop = false)
+                    }
+                    tvDynamicIsland.postDelayed(liveEngineIdleRunnable, 3 * 60 * 1000)
+
+                    true
+                }
+                else -> false
+            }
+        }
         btnBottomMic = findViewById(R.id.btn_bottom_mic)
         tvDynamicIsland = findViewById(R.id.tv_dynamic_island)
         btnSettings = findViewById(R.id.btn_settings)
@@ -259,12 +605,13 @@ class MainActivity : AppCompatActivity() {
 
         val onLongClickAction = { msg: ChatMessage -> showBubbleOptionsDialog(msg) }
 
-        val onPlayClickAction = { text: String, voiceId: String ->
+        val onPlayClickAction = { text: String, voiceId: String, isTopSpeaker: Boolean -> // 🌟 新增身份参数
             if (voiceId.startsWith("hy-AM")) {
                 setIslandState("⚠️ 亚美尼亚语暂不支持语音播报", "#FFA500")
                 resetIslandDelayed()
             } else {
-                edgeTts.speak(text, voiceId,
+                val forceHeadset = isTopSpeaker && isHeadsetPluggedIn() // 🌟 对方的话强制走耳机
+                edgeTts.speak(text, voiceId, forceHeadset,
                     onNodeSelected = { nodeName ->
                         // 灵动岛提示节点加载
                         setIslandState("🎵 准备发音 [$nodeName]", "#00BCFF")
@@ -348,7 +695,8 @@ class MainActivity : AppCompatActivity() {
                         btnFullscreenPlay.setTextColor(android.graphics.Color.WHITE)
                         (btnFullscreenPlay.background as android.graphics.drawable.GradientDrawable).setStroke(4, android.graphics.Color.parseColor("#00BCFF"))
                     } else {
-                        edgeTts.speak(translatedText, voiceId,
+                        val forceHeadset = isTop && isHeadsetPluggedIn() // 🌟 强制私密播报
+                        edgeTts.speak(translatedText, voiceId, forceHeadset,
                             onNodeSelected = { nodeName ->
                                 runOnUiThread {
                                     btnFullscreenPlay.text = "⏳ 连接 $nodeName"
@@ -359,12 +707,14 @@ class MainActivity : AppCompatActivity() {
                                 runOnUiThread {
                                     btnFullscreenPlay.text = strStop
                                     btnFullscreenPlay.setTextColor(android.graphics.Color.parseColor("#00FF00"))
+                                    updateLiveTranslateMuteState() // 🌟 喇叭发声，持续静音同传
                                     (btnFullscreenPlay.background as android.graphics.drawable.GradientDrawable).setStroke(4, android.graphics.Color.parseColor("#00FF00"))
                                 }
                             },
                             onDone = {
                                 runOnUiThread {
                                     btnFullscreenPlay.text = strPlay
+                                    finishClassicRecordingCycle() // 🌟 播报结束，善后清理并瞬间恢复同传
                                     btnFullscreenPlay.setTextColor(android.graphics.Color.WHITE)
                                     (btnFullscreenPlay.background as android.graphics.drawable.GradientDrawable).setStroke(4, android.graphics.Color.parseColor("#00BCFF"))
                                 }
@@ -582,6 +932,10 @@ class MainActivity : AppCompatActivity() {
 
             triggerVibration(50)
             showTransientIslandMessage("🔄 双方语种已互换", "#00BCFF")
+
+            // 🌟 核心修复 3：语种变了，必须杀掉旧引擎！迫使下次按键时拉取新的语种配置
+            geminiLiveEngine?.stop()
+            geminiLiveEngine = null
         }
 
         btnClear.setOnClickListener {
@@ -592,6 +946,11 @@ class MainActivity : AppCompatActivity() {
                     .setPositiveButton("清空") { _, _ ->
                         topAdapter.clearMessages()
                         bottomAdapter.clearMessages()
+
+                        // 🌟 核心修复 4：清屏时彻底抹除同传记忆体，防止幽灵气泡和消失 Bug！
+                        currentLiveMsgId = ""
+                        currentLiveInputText = ""
+                        currentLiveOutputText = ""
 
                         triggerVibration(50)
                         showTransientIslandMessage("✨ 已清屏", "#00FF00")
@@ -607,12 +966,68 @@ class MainActivity : AppCompatActivity() {
         loadSettings()
         requestAudioPermission()
     }
+    // 🌟 核心防线：物理耳机侦测器
+    private fun isHeadsetPluggedIn(): Boolean {
+        // 👇 新加这一行，直接强行返回 true，骗过系统，测试完 UI 记得删掉！
+        //return true
+        val audioManager = getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
+        val devices = audioManager.getDevices(android.media.AudioManager.GET_DEVICES_OUTPUTS)
+        for (device in devices) {
+            // 只要检测到有线耳机、蓝牙A2DP耳机、或低功耗蓝牙耳机，就放行
+            if (device.type == android.media.AudioDeviceInfo.TYPE_WIRED_HEADSET ||
+                device.type == android.media.AudioDeviceInfo.TYPE_WIRED_HEADPHONES ||
+                device.type == android.media.AudioDeviceInfo.TYPE_BLUETOOTH_A2DP ||
+                device.type == android.media.AudioDeviceInfo.TYPE_BLE_HEADSET) {
+                return true
+            }
+        }
+        return false
+    }
+    // 🌟 新增：中央音量互斥锁。只要我方在录音或系统在外放喇叭，强行捂住同传引擎的嘴！
+    private fun updateLiveTranslateMuteState() {
+        val shouldMute = isCurrentlyRecordingClassic || edgeTts.isSpeaking
+        geminiLiveEngine?.isMutedBySystem = shouldMute // 🌟 锁住系统锁，绝不干扰用户的物理按键锁
+    }
+
+    // 👇 确保加入了这个全新的公共方法
+    private fun finishClassicRecordingCycle() {
+        isCurrentlyRecordingClassic = false
+        updateLiveTranslateMuteState()
+        // 麦克风物归原主，让同传重新接管麦克风硬件 (但保持软静音等待用户按下)
+        if (isLiveTranslateEnabled) {
+            geminiLiveEngine?.restoreHardwareMic()
+        }
+    }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
         if (hasFocus) hideSystemUI()
     }
+    // ==========================================
+    // 🌟 核心修复：生命周期级状态重同步
+    // ==========================================
+    override fun onResume() {
+        super.onResume()
 
+        // 确保各种引擎和控件已经初始化，防止极小概率的冷启动空指针
+        if (::edgeTts.isInitialized && ::seekbarTtsVolume.isInitialized) {
+
+            // 🎯 核心逻辑：只有在【耳机模式】下，才去抓取底层系统音量。
+            if (!edgeTts.isSpeakerRoute) {
+                val am = getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
+
+                // 1. 获取系统最真实的媒体流 (Music) 音量档位
+                val maxVol = am.getStreamMaxVolume(android.media.AudioManager.STREAM_MUSIC)
+                val currentVol = am.getStreamVolume(android.media.AudioManager.STREAM_MUSIC)
+
+                // 2. 将物理档位按比例换算回 0-100 的百分比
+                val percent = ((currentVol.toFloat() / maxVol) * 100).toInt().coerceIn(0, 100)
+
+                // 3. 静默同步 UI 进度条
+                seekbarTtsVolume.progress = percent
+            }
+        }
+    }
     private fun hideSystemUI() {
         WindowInsetsControllerCompat(window, window.decorView).apply {
             hide(WindowInsetsCompat.Type.systemBars())
@@ -836,7 +1251,7 @@ class MainActivity : AppCompatActivity() {
         val etGroq = addInput("gsk_...", aiEngine.groqApiKey, engineCard)
 
         // --- 开始：增强版 Groq 引擎面板 ---
-        addTitle("🧠 Groq 主力引擎", null, engineCard)
+        addTitle("🧠 Groq 主力翻译模型", null, engineCard)
         val spGroqModel = Spinner(context).apply {
             val initList = mutableListOf(aiEngine.currentGroqModel)
             adapter = createModelAdapter(initList)
@@ -872,7 +1287,11 @@ class MainActivity : AppCompatActivity() {
                     if (success && textModels.isNotEmpty()) {
                         // 1. 刷新文本大模型下拉框
                         spGroqModel.adapter = createModelAdapter(textModels)
-                        val targetIndex = textModels.indexOfFirst { it.contains("qwen", ignoreCase = true) }.takeIf { it >= 0 } ?: 0
+                        // 🌟 智能推举热更：Qwen 已下架，优先寻找官方推荐的 gpt-oss，找不到找 120b，再兜底 70b
+                        val targetIndex = textModels.indexOfFirst { it.contains("gpt-oss", ignoreCase = true) }.takeIf { it >= 0 }
+                            ?: textModels.indexOfFirst { it.contains("120b", ignoreCase = true) }.takeIf { it >= 0 }
+                            ?: textModels.indexOfFirst { it.contains("70b", ignoreCase = true) }.takeIf { it >= 0 }
+                            ?: 0
                         spGroqModel.setSelection(targetIndex)
 
                         // 2. 刷新语音大模型下拉框
@@ -899,7 +1318,7 @@ class MainActivity : AppCompatActivity() {
         addTitle("🔑 Gemini API Key【🌐 前往官网获取】", "https://aistudio.google.com/app/apikey", engineCard)
         val etGemini = addInput("AIzaSy...", aiEngine.geminiApiKey, engineCard)
 
-        addTitle("🧠 Gemini 备用引擎", null, engineCard)
+        addTitle("👁️ Gemini 视觉翻译模型", null, engineCard)
         val spGeminiModel = Spinner(context).apply {
             val initList = mutableListOf(aiEngine.currentGeminiModel)
             adapter = createModelAdapter(initList)
@@ -907,8 +1326,17 @@ class MainActivity : AppCompatActivity() {
         }
         engineCard.addView(spGeminiModel)
 
+        // 🌟 新增：专属的实时同传模型下拉框
+        addTitle("🎧 Gemini 实时同传模型", null, engineCard, "#00E676")
+        val spGeminiLiveModel = Spinner(context).apply {
+            val initList = mutableListOf(aiEngine.currentGeminiLiveModel)
+            adapter = createModelAdapter(initList)
+            background = GradientDrawable().apply { setColor(Color.parseColor("#0F0F0F")); setStroke(2, Color.DKGRAY); cornerRadius = 15f }
+        }
+        engineCard.addView(spGeminiLiveModel)
+
         val btnFetchGeminiModels = Button(context).apply {
-            text = "🔄 联网拉取 Gemini 最新模型"
+            text = "🔄 联网拉取 Gemini 最新模型库"
             setBackgroundColor(Color.parseColor("#00BCFF"))
             setTextColor(Color.WHITE)
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { topMargin = 20 }
@@ -916,21 +1344,31 @@ class MainActivity : AppCompatActivity() {
                 this.text = "拉取中..."
                 this.isEnabled = false
                 aiEngine.geminiApiKey = etGemini.text.toString().trim()
-                aiEngine.fetchGeminiModels { success, models ->
+
+                // 🌟 双向分发回调
+                aiEngine.fetchGeminiModels { success, visionModels, liveModels ->
                     if (isDestroyed || isFinishing) return@fetchGeminiModels
-                    this.text = "🔄 联网拉取 Gemini 最新模型"
+                    this.text = "🔄 联网拉取 Gemini 最新模型库"
                     this.isEnabled = true
-                    if (success && models.isNotEmpty()) {
-                        spGeminiModel.adapter = createModelAdapter(models)
-                        val targetIndex = models.indexOfFirst { it == "gemini-3.1-flash-lite" }
-                            .takeIf { it >= 0 }
-                            ?: models.indexOfFirst { it.contains("gemini-3.1-flash", ignoreCase = true) }
-                                .takeIf { it >= 0 }
-                            ?: models.indexOfFirst { it.contains("gemini-3-flash", ignoreCase = true) }
-                                .takeIf { it >= 0 }
-                            ?: 0
-                        spGeminiModel.setSelection(targetIndex)
-                        Toast.makeText(context, "Gemini 模型库已更新！", Toast.LENGTH_SHORT).show()
+
+                    if (success) {
+                        // 1. 刷新视觉文本盒子
+                        if (visionModels.isNotEmpty()) {
+                            spGeminiModel.adapter = createModelAdapter(visionModels)
+                            val targetIndex = visionModels.indexOfFirst { it == "gemini-3.1-flash-lite" }.takeIf { it >= 0 }
+                                ?: visionModels.indexOfFirst { it.contains("gemini-3.1-flash", ignoreCase = true) }.takeIf { it >= 0 }
+                                ?: 0
+                            spGeminiModel.setSelection(targetIndex)
+                        }
+
+                        // 2. 刷新同传专属盒子
+                        if (liveModels.isNotEmpty()) {
+                            spGeminiLiveModel.adapter = createModelAdapter(liveModels)
+                            val liveTargetIndex = liveModels.indexOfFirst { it.contains("gemini-3.5-live-translate", ignoreCase = true) }.takeIf { it >= 0 }
+                                ?: 0
+                            spGeminiLiveModel.setSelection(liveTargetIndex)
+                        }
+                        Toast.makeText(context, "Gemini 双轨模型库已更新！", Toast.LENGTH_SHORT).show()
                     } else {
                         Toast.makeText(context, "拉取失败，请检查 Key 或网络环境", Toast.LENGTH_SHORT).show()
                     }
@@ -938,6 +1376,8 @@ class MainActivity : AppCompatActivity() {
             }
         }
         engineCard.addView(btnFetchGeminiModels)
+
+
 
         // =========================================================================
         // 🥈 【已下沉】云端 TTS 语音服务器集群设置 (双轨制)
@@ -1070,10 +1510,11 @@ class MainActivity : AppCompatActivity() {
             .setPositiveButton("保存") { _, _ ->
                 val editor = sharedPrefs.edit()
                 editor.putString("groq_key", etGroq.text.toString().trim())
-                editor.putString("groq_model", spGroqModel.selectedItem?.toString() ?: "qwen/qwen3-32b")
+                editor.putString("groq_model", spGroqModel.selectedItem?.toString() ?: "openai/gpt-oss-120b")
                 editor.putString("groq_asr_model", spGroqAsrModel.selectedItem?.toString() ?: "whisper-large-v3")
                 editor.putString("gemini_key", etGemini.text.toString().trim())
                 editor.putString("gemini_model", spGeminiModel.selectedItem?.toString() ?: "gemini-3.1-flash-lite")
+                editor.putString("gemini_live_model", spGeminiLiveModel.selectedItem?.toString() ?: "gemini-3.5-live-translate-preview")
 
                 // 🌟 修改：保存新的双轨制模式和配置
                 editor.putString("tts_mode", if (spTtsMode.selectedItemPosition == 0) "auto" else "custom")
@@ -1088,6 +1529,11 @@ class MainActivity : AppCompatActivity() {
                 editor.apply()
 
                 loadSettings()
+
+                // 🌟 核心修复 4：设置保存了，必须杀掉旧引擎重置记忆体！
+                geminiLiveEngine?.stop()
+                geminiLiveEngine = null
+
                 showTransientIslandMessage("✅ 设置已保存", "#00FF00")
             }
             .setNegativeButton("取消", null)
@@ -1124,41 +1570,93 @@ class MainActivity : AppCompatActivity() {
         }
 
         // ================= 📝 正文区 =================
-        addSection("🎙️ 基础对讲与 UI 控件", """
-            <b>• 语音输入：</b>长按🎙️下方/上方麦克风录音，松开即触发翻译与播报。<br>
-            <b>• 滑动取消：</b>长按录音时，手指向上滑动即可取消发送。<br>
-            <b>• 键盘输入：</b>点击中央 <b>[ ✍️ ]</b> 呼出键盘，直接输入文字，文字可加入➕笔记本。<br>
-            <b>• 极速快译：</b>长按中央 <b>[ ✍️ ]</b> 直接免键盘弹出快捷笔记本，点击条目瞬间完成翻译并自动语音朗读，适用于高频应急对话。<br>
-            <b>• 语种互换：</b>点击中央 <b>[ ↕️ ]</b> 快速对调双方语种与音色。<br>
-            <b>• 一键清屏：</b>点击中央 <b>[ 🗑️ ]</b> 彻底清空当前所有聊天记录。<br>
-            <b>• 更改气泡特效：</b>长按灵动岛 <b>[ 🌤️ ️ ]</b> 可更改气泡特效。<br>
-            <b>• 字号调节：</b>点击右下角 <b>[ A+ / A- ]</b> 调节气泡字号。
+        addSection("📱 界面 UI 控件", """
+            <b>【上半屏 • 对方控制区（倒置呈现，方便面对面交流）】</b><br>
+            <b>• 对方文字区：</b>新消息气泡会自动贴近屏幕中央。<br>
+            <b>• 同传按钮：</b><br>
+            &nbsp;&nbsp;<u>💡 提示：</u>这是<b>谷歌（Google）全新推出的独立实时同传功能</b>。原理与普通翻译完全不同：它能一边听你说话，一边在后台实时翻译并同步播放声音。你不需要像以前那样“说完一整句话，然后等它翻译、播放”，而是能做到真正的“一边说一边翻译”。<br>
+            &nbsp;&nbsp;<u>⚠️ 注意：</u><b>使用【同传】功能时，请务必佩戴耳机！</b>目前同传功能主要是针对于把“对方语言”实时翻译成“我方语言”，实时翻译的结果音频流总是从耳机播放。<br>
+            <b>• 音量调节滑条：</b>用于智能调节 TTS 播报音量，具备外放/耳机双通道独立记忆功能（详细机制见下文）。<br>
+            <b>• 声音路由 【 🔈外放/🎧耳机 】：</b>决定发音和扩音的物理通道。配合耳机使用，可让手机化身为极其强大的“单向翻译官模式”。详细运转逻辑请仔细阅读下方的<b>《🎧 智能音频路由引擎》</b>专属说明。<br>
+            <b>• 对方录音键 【 🎙️对方 】：</b>传统的“你一句、我一句”对讲模式（不需要戴耳机）。按住说话，松手翻译。<br><br>
+            
+            <b>【中轴控制线 • 灵动状态面板】</b><br>
+            <b>• 中央灵动岛：</b>实时显示翻译进度与连接提示。长按可打开控制台，开关TTS发音或切换气泡动画。<br>
+            <b>• 语种互换 【 ↕️ 】：</b>互换双方的输入语言及对应的发音人。<br>
+            <b>• 一键清屏 【 🗑️ 】：</b>清空屏幕聊天记录。<br>
+            <b>• 键盘输入 【 ✍️ 】：</b>点击打字输入文本；<b>长按</b>直接拉出笔记本常用话语。<br>
+            <b>• 设置面板 【 ⚙️ 】：</b>打开系统配置卡片，输入你的 API Key 密钥并配置模型。<br><br>
+            
+            <b>【下半屏 • 我方控制区（正常方向，我方观看）】</b><br>
+            <b>• 我方文字区：</b>我方视角的双语翻译记录。<br>
+            <b>• 我方录音键 【 🎙️我方 】：</b>长按录制我方语言，松手翻译。往屏幕中央滑动手指可取消发送。<br>
+            <b>• 字号控制器 【 A+ / ◆ / A- 】：</b>A+ 放大聊天文字，A- 缩小文字，◆ 恢复默认字号。即时调节双聊天框。<br>
+            <b>• 视觉翻译 【 📷 】：</b>点击展开子菜单。点击 📸 调起相机拍照，点击 🖼️ 从相册导入图片。
         """.trimIndent(), "#00E676")
 
-        addSection("✨ 气泡手势与视觉翻译", """
-            <b>• 双击全屏展示：</b>对任意气泡<b>快速双击</b>，唤出高对比度「全屏大字报」，支持双指缩放，便于向他人展示。<br>
-            <b>• 长按快捷菜单：</b><b>长按</b>聊天气泡，可一键复制原文/译文、<b>加入快捷笔记本</b>，或将其打上幻听标签。<br>
-            <b>• 快捷笔记本管理：</b>点击 ✍️ 在面板内 <b>[ 📑 ]</b> 展开管理。按任意条目可修改名称与正文</b>。<br>
-            <b>• 相机视觉提取：</b>点击左下角 <b>[ 📷 ]</b>，支持拍照或选图。利用裁剪框精准圈选文本，AI 将自动进行 OCR 提取并翻译，甚至支持直接语音朗读图片内容。<br>
-            <b>• 笔记本指令台：</b>点击笔记本右上角 <b>[ ⋮ ]</b> 呼出控制菜单，支持<b>📥导入笔记本（提供覆盖、追加、时间戳去重智能合并）</b>、<b>📤导出笔记本（系统分享面板免权保存）</b>、<b>🧹清空数据（带确认防误触机制）</b>以及<b>➕建立新笔记（直接在弹窗内原地创建并置顶）</b>。
-        """.trimIndent(), "#00BCFF")
+        // 🌟 新增独立专区：音频路由引擎
+        addSection("🎧 KANE 智能音频路由引擎 (Smart Audio Routing)", """
+            
+            <b>【场景一：没戴耳机（裸机交流）】</b><br>
+            当你没有连接任何耳机或蓝牙设备时：<br>
+            无论你点什么按钮，<b>所有的声音</b>（对方的话、你的话、AR 视觉翻译），统统从手机的<b>大喇叭</b>里播放出来。此时手机就像一个纯粹的双向扩音器。<br><br>
+            
+            <b>【场景二：戴上耳机 ＋ 选择了 🎧耳机 模式】</b><br>
+            这是<b>“全沉浸模式”</b>。当你戴着耳机，且面板上的开关拨到了【🎧耳机】时：<br>
+            所有的声音<b>无一例外</b>，全部都在你的耳机里私密播放。不管是对方对你说的悄悄话，还是你输入的草稿发音，亦或是 AR 拍照翻译的菜单，手机本体绝对保持安静，绝不社死。<br><br>
+            
+            <b>【场景三：戴上耳机 ＋ 选择了 🔈外放 模式】🌟 (核心魔法)</b><br>
+            这是本软件最强大的<b>“单向翻译官模式”</b>！当你戴着耳机，却按下了【🔈外放】按钮时，系统会瞬间化身智能交警，进行声音分流：<br>
+            <b>🗣️ 老外对你说的话</b>（对方气泡自动播报 / 点击老外气泡小喇叭）：<br>
+            &nbsp;&nbsp;<u>魔法拦截：</u>系统知道这是说给你听的中文，如果外放出来会很奇怪。因此，系统会无视你的“外放”按钮，<b>强制将老外的话塞进你的耳机里私密播报！</b><br>
+            <b>🙋‍♂️ 你对老外说的话</b>（我方气泡自动播报 / 草稿全屏 / AR拍照朗读）：<br>
+            &nbsp;&nbsp;<u>听从指挥：</u>系统知道这是你想展示给外界的，于是<b>立刻打通手机本体的大喇叭</b>，把你的外语翻译大声向外广播，手机瞬间变成你的单向扩音器！<br><br>
+            
+            <b>📌 两个特殊补充说明：</b><br>
+            <b>1. 独立音量记忆：</b><br>
+            &nbsp;&nbsp;在【🔈外放】模式下，滑动音量条调节的是手机的扩音喇叭，<b>不影响</b>你耳机里听歌的音量。<br>
+            &nbsp;&nbsp;在【🎧耳机】模式下，滑动音量条则与你手机系统的媒体音量完美同步。<br>
+            <b>2. 🎙️ 实时同传功能：</b><br>
+            &nbsp;&nbsp;同传功能是最高级别的同声传译。为了不干扰你和对方说话，同传的声音<b>永远只在耳机内播放</b>，不受外放按钮控制。<br><br>
+            
+            <b>💡 总结</b><br>
+            你不需要去记复杂的逻辑。你只要记住：<b>戴上耳机后，老外的话永远在你耳边低语。而你可以随时通过【🔈外放/🎧耳机】按钮，决定你自己的翻译结果与各种文字发音是要“喊给世界听”，还是“留给自己听”。</b>
+        """.trimIndent(), "#FFD700")
 
-        addSection("⚙️ 设置面板：AI 引擎配置", """
-            <b>• Groq 主力引擎：</b>提供极速语音识别与翻译。需自行前往官网申请 API Key。点击「拉取最新模型」可实时更新云端可用模型 (默认推荐 Qwen 系列/70B等)。<br>
-            <b>• Gemini 备用/视觉引擎：</b>当主力网络阻断时，系统将静默无缝切换至 Gemini 兜底；此外，所有的图片翻译均由 Gemini 引擎独立完成。同样需自备 API Key。
+        addSection("✨ 气泡手势与视觉 AR 交互", """
+            <b>• 双击全屏大字报展示：</b>快速双击任意聊天气泡，可打开全屏大字报。并可旋转、TTS发音，在嘈杂的机场或商铺非常好用。<br>
+            <b>• 长按聊天气泡：</b>长按气泡，可快速复制、<b>存入快捷笔记本</b>。如果识别结果有误，你不用重新录音，直接选择<b>“编辑并重译”</b>就能手动修改原文并重新翻译。或者“拉黑”彻底过滤某些词。<br>
+            <b>• 文本草稿全屏：</b>打字输入时，点击“全屏展示”按钮，可将尚未发送的草稿放大在全屏举牌展示（支持朗读与翻转）。<br>
+            <b>• 视觉 AR 字幕滤镜：</b>使用相机拍照翻译后，<b>点击结果页的图片空白处</b>，即可在默认背景、高透背景、无背景黑边等 5 种字幕样式间循环切换。<br>
+            &nbsp;&nbsp;<u>⚠️ 建议：</u>拍照时尽量把手机端平，并在裁剪框里精准框选需要翻译的文字，这能帮助 AI 把翻译后的字幕最精准地贴在原图对应位置。""".trimIndent(), "#00BCFF")
+
+        addSection("⚙️ 设置面板各项功能与使用方法", """
+            <b>【Groq 极速对讲配置】</b><br>
+            <b>• Groq API Key：</b>点击"前往官网获取"，填入你在官网申请的Groq API KEY（gsk_开头）。<br>
+            <b>• Groq 主力翻译模型：</b>你日常文字翻译所用的大模型，如果偶尔遇到网络拥堵，系统会自动使用备用引擎接管，整个过程无缝完成。（默认推荐 GPT OSS 120B，速度与翻译质量俱佳，如果之后官网下架相关模型，可重新【拉取最新模型】之后选择一个，选70B也是可以的）。<br>
+            <b>• Groq 语音识别模型：</b>将你声音识别为文字的模型（默认推荐 whisper-large-v3）。<br>
+            <b>• 联网拉取 Groq 模型按钮：</b>输入 Key 后点击此键，系统会连接服务器，自动刷新并列出当前云端最新可用的翻译和听写模型。<br><br>
+            
+            <b>【Gemini 视觉与同传配置】</b><br>
+            <b>• Gemini API Key：</b>点击"前往官网获取"，填入你在谷歌 AI Studio 申请的密钥（AIzaSy开头）。<br>
+            <b>• Gemini 视觉翻译模型：</b>备用翻译、拍照翻译、提取文字并智能对齐位置呈现（默认推荐 gemini-3.1-flash-lite）。<br>
+            <b>• Gemini 实时同传模型：</b>专用于流式同传的专属大模型（默认推荐 gemini-3.5-live-translate-preview）。<br>
+            <b>• 联网拉取 Gemini 模型按钮：</b>输入 Key 后点击，自动连网更新并列出谷歌官方最新发布的视觉与实时同传大模型列表。<br><br>
+            
+            <b>【TTS 云端发音服务器集群配置】</b><br>
+            <b>• 服务器工作模式切换：</b>
+            &nbsp;&nbsp;- <u>自动模式</u>：全自动智能负载均衡，推荐绝大多数情况下使用。
+            &nbsp;&nbsp;- <u>自定义单节点模式</u>：允许你单独连通自建或私有的语音节点。<br>
+            <b>• 手动刷新服务器列表按钮：</b>在自动模式下，可一键拉取、更新最新的免费高保真发音服务器列表。<br>
+            <b>• 私有节点 URL：</b>在自定义模式下，手动填入你自己搭建的微软高拟真语音合成（TTS）服务地址。<br>
+            <b>• 授权暗号 (Token)：</b>填入校验暗号。用于身份安全验证，防止TTS服务器节点被盗刷。<br><br>
+            
+            <b>【高级选项】</b><br>
+            <b>• 开启语音自动播报 (TTS)：</b>勾选则翻译完成后自动开口说话；取消勾选则系统保持安静，只出文字不播发音。<br>
+            <b>• 管理幻听屏蔽词黑名单按钮：</b>点击进入黑名单面板，可以手动添加常出现的底噪噪音词，或一键重置系统推荐的 7 个初始核心过滤词。
         """.trimIndent(), "#FFA500")
 
-        addSection("🌐 设置面板：云端 TTS 配置", """
-            <b>• 语音开关：</b>可自由勾选是否开启「自动语音播报 (TTS)」。<br>
-            <b>• 节点拉取机制：</b>采用微软高保真发音。当发音失效时，点击<b>「一键获取最新可用线路」</b>，系统会优先从 GitHub CDN 极速拉取最新集群列表；若遭遇网络阻断，将静默降级至 Hugging Face 备用通道获取。<br>
-            <b>• 自定义 URL 与暗号：</b>支持手动填入私人部署的 TTS 节点地址。<b>「专属访问暗号 (Token)」</b>用于验证身份，防止私人云端节点被非法盗刷接口额度。
-        """.trimIndent(), "#00BCFF")
 
-        addSection("🛡️ 设置面板：幻听防火墙", """
-            <b>• 触发原理：</b>在极端安静环境下，AI 偶会将底噪强行解析为“字幕”、“谢谢观看”等无意义的“幻觉词汇”。<br>
-            <b>• 拦截与管理：</b>您可以在主界面长按气泡快速拉黑，或进入设置面板点击<b>「管理幻听词黑名单」</b>进行手动添加/删除。一旦识别结果包含黑名单词汇，系统将在 0.1 秒内拦截并静默抛弃。<br>
-            <b>• 紧急洗牌：</b>若规则混乱，可点击底部按钮一键恢复系统内置的 6 个底层防护规则。
-        """.trimIndent(), "#FF4444")
 
         addSection("⚖️ 隐私合规与免责声明 (GDPR & TOU)", """
             本软件架构与数据处理流程严格遵从《欧盟通用数据保护条例》(GDPR) 规范，请您在使用前知悉并同意以下条款：<br><br>
@@ -1172,7 +1670,7 @@ class MainActivity : AppCompatActivity() {
 
         // 署名留白区
         val tvFooter = TextView(context).apply {
-            text = "Designed & Developed by KANE\nVer 5.3.3 Pro"
+            text = "Designed & Developed by KANE\nVer 5.4.0 Pro"
             setTextColor(Color.parseColor("#666666"))
             textSize = 12f
             gravity = android.view.Gravity.CENTER
@@ -1271,7 +1769,8 @@ class MainActivity : AppCompatActivity() {
                     btnFullscreenPlay.setTextColor(android.graphics.Color.WHITE)
                     (btnFullscreenPlay.background as android.graphics.drawable.GradientDrawable).setStroke(4, android.graphics.Color.parseColor("#00BCFF"))
                 } else {
-                    edgeTts.speak(text, voiceId,
+                    val forceHeadset = isTop && isHeadsetPluggedIn() // 🌟 强制私密播报
+                    edgeTts.speak(text, voiceId, forceHeadset,
                         onNodeSelected = { nodeName ->
                             runOnUiThread {
                                 btnFullscreenPlay.text = "⏳ 连接 $nodeName"
@@ -1522,7 +2021,7 @@ class MainActivity : AppCompatActivity() {
                 val newArray = org.json.JSONArray()
                 newArray.put(newObj)
                 for (i in 0 until array.length()) newArray.put(array.getJSONObject(i))
-                sharedPrefs.edit().putString("kane_notebook_data", newArray.toString()).apply()
+                heavyTaskExecutor.execute { try { java.io.File(filesDir, "kane_notebook.json").writeText(newArray.toString(), Charsets.UTF_8) } catch (e: Exception) {} }
                 triggerVibration(40)
                 Toast.makeText(context, "✅ 已存入笔记本", Toast.LENGTH_SHORT).show()
             }
@@ -1550,7 +2049,8 @@ class MainActivity : AppCompatActivity() {
                     val targetLangName = if (isTop) ptLangName else myLangName
                     val voiceId = getSmartVoiceId(voiceName, targetLangName)
 
-                    edgeTts.speak(input, voiceId,
+                    val forceHeadset = isTop && isHeadsetPluggedIn() // 🌟 强制私密播报
+                    edgeTts.speak(input, voiceId, forceHeadset,
                         onNodeSelected = { _ -> runOnUiThread { speakerBtn.text = "⏳"; (speakerBtn.background as GradientDrawable).setColor(Color.parseColor("#121212")) } },
                         onStart = { runOnUiThread { speakerBtn.text = "⏹️"; (speakerBtn.background as GradientDrawable).setColor(Color.parseColor("#331111")); (speakerBtn.background as GradientDrawable).setStroke((2 * density).toInt(), Color.parseColor("#FF4444")) } },
                         onDone = { runOnUiThread { speakerBtn.text = "🔊"; (speakerBtn.background as GradientDrawable).setColor(Color.parseColor("#252526")); (speakerBtn.background as GradientDrawable).setStroke((2 * density).toInt(), Color.parseColor(activeColor)) } }
@@ -1781,15 +2281,22 @@ class MainActivity : AppCompatActivity() {
 
     private fun loadSettings() {
         aiEngine.groqApiKey = sharedPrefs.getString("groq_key", "") ?: ""
-        aiEngine.currentGroqModel = sharedPrefs.getString("groq_model", "qwen/qwen3-32b") ?: "qwen/qwen3-32b"
+        aiEngine.currentGroqModel = sharedPrefs.getString("groq_model", "openai/gpt-oss-120b") ?: "openai/gpt-oss-120b" // 👈 修改默认值
         aiEngine.currentGroqAsrModel = sharedPrefs.getString("groq_asr_model", "whisper-large-v3") ?: "whisper-large-v3"
         aiEngine.geminiApiKey = sharedPrefs.getString("gemini_key", "") ?: ""
         aiEngine.currentGeminiModel = sharedPrefs.getString("gemini_model", "gemini-3.1-flash-lite") ?: "gemini-3.1-flash-lite"
+        // 🌟 新增：加载专属同传模型
+        aiEngine.currentGeminiLiveModel = sharedPrefs.getString("gemini_live_model", "gemini-3.5-live-translate-preview") ?: "gemini-3.5-live-translate-preview"
         myLangName = sharedPrefs.getString("lang_me", "中文") ?: "中文"
         ptLangName = sharedPrefs.getString("lang_pt", "英语") ?: "英语"
         myVoiceName = sharedPrefs.getString("voice_me", "晓晓 (中&英·温柔女声)") ?: "晓晓 (中&英·温柔女声)"
         ptVoiceName = sharedPrefs.getString("voice_pt", "Ava (英文·自然女声)") ?: "Ava (英文·自然女声)"
         isTtsEnabled = sharedPrefs.getBoolean("tts_enabled", true)
+
+        // 👇 🌟 新增这三行：加载上次保存的外放音量，默认值为 100
+        val savedVolume = sharedPrefs.getInt("tts_speaker_volume", 100)
+        edgeTts.speakerVolume = savedVolume
+        if (edgeTts.isSpeakerRoute) seekbarTtsVolume.progress = savedVolume
 
         btnBottomMic.text = "🎙️\n${myLangName.take(1)}"
         btnTopMic.text = "🎙️\n${ptLangName.take(1)}"
@@ -2034,7 +2541,7 @@ class MainActivity : AppCompatActivity() {
                         newArray.put(newObj)
                         for (i in 0 until array.length()) newArray.put(array.getJSONObject(i))
 
-                        sharedPrefs.edit().putString("kane_notebook_data", newArray.toString()).apply()
+                        heavyTaskExecutor.execute { try { java.io.File(filesDir, "kane_notebook.json").writeText(newArray.toString(), Charsets.UTF_8) } catch (e: Exception) {} }
 
                         triggerVibration(40)
                         Toast.makeText(this, "✅ 已存入快捷笔记本", Toast.LENGTH_SHORT).show()
@@ -2085,10 +2592,16 @@ class MainActivity : AppCompatActivity() {
                 } else {
                     val noVoiceMsg = if (isTop) "⚠️ Voice not detected" else "⚠️ 未听清，请重试"
                     setIslandState(noVoiceMsg, "#FFA500", isTop = isTop)
+                    finishClassicRecordingCycle() // 🌟 没听清退出，善后并恢复同传
                     resetIslandDelayed()
                 }
             } else {
-                setIslandState(rawText, "#FF4444", isTop = isTop)
+                // 🌟 雷达嗅探：语音模型死掉了，触发主界面级强弹窗警告
+                if (rawText.contains("model", true) && (rawText.contains("not exist", true) || rawText.contains("404"))) {
+                    Toast.makeText(this@MainActivity, "🚨 语音识别模型已失效/下架！请去设置点击【联网拉取最新模型】。", Toast.LENGTH_LONG).show()
+                }
+                setIslandState("语音服务失联: " + rawText.take(15), "#FF4444", isTop = isTop)
+                finishClassicRecordingCycle() // 🌟 报错退出，善后并恢复同传
                 resetIslandDelayed(3500L)
             }
         }
@@ -2108,10 +2621,15 @@ class MainActivity : AppCompatActivity() {
         setIslandState(transMsg, "#FFFF00", isTop = isTop)
 
         aiEngine.translateText(text, llmSourceEn, llmTargetEn,
-            onFallback = {
+            onFallback = { isModelDead ->
                 runOnUiThread {
                     val fallbackMsg = if (isTop) "⚠️ Using Backup AI..." else "⚠️ 切换备用引擎..."
                     setIslandState(fallbackMsg, "#FFA500", isTop = isTop)
+
+                    // 🌟 终极报警：捕捉到模型死亡信号！弹出 Toast 强警告！
+                    if (isModelDead) {
+                        Toast.makeText(this@MainActivity, "🚨 Groq当前模型已下架！请前往设置【拉取最新模型】，推荐尝试 GPT OSS 120B 或 llama-3.3-70B！", Toast.LENGTH_LONG).show()
+                    }
                 }
             }
         ) { llmSuccess, translated, engineName ->
@@ -2121,6 +2639,7 @@ class MainActivity : AppCompatActivity() {
                 if (translated.isBlank()) {
                     val noiseMsg = if (isTop) "🎯 Noise Filtered" else "🎯 已过滤杂音"
                     setIslandState(noiseMsg, "#888888", isTop = isTop)
+                    finishClassicRecordingCycle() // 🌟 过滤杂音退出，善后并恢复同传
                     resetIslandDelayed()
                     return@translateText
                 }
@@ -2159,7 +2678,8 @@ class MainActivity : AppCompatActivity() {
                         resetIslandDelayed(3000L)
                     } else {
                         // 🌟 新增：注入 onNodeSelected 回调，在灵动岛展示节点分配情况
-                        edgeTts.speak(translated, voiceId,
+                        val forceHeadset = isTop && isHeadsetPluggedIn() // 🌟 强制私密播报
+                        edgeTts.speak(translated, voiceId, forceHeadset,
                             onNodeSelected = { nodeName ->
                                 runOnUiThread {
                                     val waitingMsg = if (isTop) "🎵 Preparing [$nodeName]" else "🎵 准备发音 [$nodeName]"
@@ -2168,6 +2688,7 @@ class MainActivity : AppCompatActivity() {
                             },
                             onStart = {
                                 setIslandState("🔊   正在播报   ⏹️ ", "#00FF00", isTop = false)
+                                updateLiveTranslateMuteState() // 🌟 外放喇叭发声，持续静音同传
                                 tvDynamicIsland.isClickable = true
                                 tvDynamicIsland.setOnClickListener {
                                     triggerVibration(50)
@@ -2175,12 +2696,16 @@ class MainActivity : AppCompatActivity() {
                                     resetIsland()
                                 }
                             },
-                            onDone = { resetIsland() }
+                            onDone = {
+                                finishClassicRecordingCycle() // 🌟 播报完美结束，善后并恢复同传
+                                resetIsland()
+                            }
                         )
                     }
                 } else {
                     val doneMsg = if (isTop) "⚡ Translated via $engineName" else "⚡ 翻译成功 (由 $engineName 提供)"
                     setIslandState(doneMsg, "#00FF00", isTop = isTop)
+                    finishClassicRecordingCycle() // 🌟 文字翻译完成直接结束，善后并恢复同传
                     resetIslandDelayed()
                 }
             } else {
@@ -2210,9 +2735,12 @@ class MainActivity : AppCompatActivity() {
         btnBottomMic.setTextColor(Color.parseColor("#00E676"))
     }
 
+    private var lastIslandText = "" // 🌟 新增：记忆灵动岛的上一条文本
+
     private fun setIslandState(text: String, colorStr: String, animatePop: Boolean = true, isTop: Boolean? = null) {
         if (isDestroyed || isFinishing) return
 
+        // 🌟 核心升级 5：排他锁！强制杀死之前遗留的所有恢复任务，杜绝文字闪烁乱跳
         tvDynamicIsland.removeCallbacks(resetIslandRunnable)
 
         if (isTop != null) {
@@ -2220,11 +2748,20 @@ class MainActivity : AppCompatActivity() {
         }
 
         val parsedColor = Color.parseColor(colorStr)
+
+        // 🌟 核心升级 6：视觉防抖！如果连续收到相同的状态提示，不再触发疯狂弹跳动画
+        val shouldAnimate = animatePop && (text != lastIslandText)
+
         tvDynamicIsland.text = text
         tvDynamicIsland.setTextColor(parsedColor)
         (tvDynamicIsland.background as GradientDrawable).setStroke(3, parsedColor)
 
-        if (animatePop) {
+        lastIslandText = text
+
+        if (shouldAnimate) {
+            tvDynamicIsland.animate().cancel() // 强行打断未完成的旧动画
+            tvDynamicIsland.scaleX = 1.0f
+            tvDynamicIsland.scaleY = 1.0f
             tvDynamicIsland.animate().scaleX(1.05f).scaleY(1.05f).setDuration(80).withEndAction {
                 tvDynamicIsland.animate().scaleX(1.0f).scaleY(1.0f).setDuration(120).start()
             }.start()
@@ -2276,6 +2813,7 @@ class MainActivity : AppCompatActivity() {
                     edgeTts.pingServer()
                     aiEngine.prewarmConnections() // 👈 新增：手指刚按下，就让 AI 引擎在后台去“抢跑”铺路！
 
+                    // 🌟 夺取底层麦克风控制权！彻底废弃 Thread.sleep，改为精准回调握手！
                     if (edgeTts.isSpeaking) edgeTts.stop()
                     startY = event.y; isCancelled = false; triggerVibration(50)
 
@@ -2285,7 +2823,22 @@ class MainActivity : AppCompatActivity() {
                     button.setTextColor(Color.parseColor("#FF4444"))
 
                     button.animate().scaleX(0.85f).scaleY(0.85f).setDuration(150).start()
-                    audioProcessor.startRecording()
+                    isCurrentlyRecordingClassic = true
+                    updateLiveTranslateMuteState() // 🌟 录音开始，瞬间静音同传
+
+                    // 🌟 脱去冗余的套娃线程，直接调用！
+                    val startRecordingTask = {
+                        audioProcessor.startRecording()
+                    }
+
+                    if (geminiLiveEngine != null) {
+                        geminiLiveEngine?.suspendHardwareMic {
+                            startRecordingTask()
+                        }
+                    } else {
+                        startRecordingTask()
+                    }
+
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
@@ -2308,26 +2861,7 @@ class MainActivity : AppCompatActivity() {
                     }
                     true
                 }
-                // ... 下面的 ACTION_UP 逻辑不用变，保持原样即可 ...
-                MotionEvent.ACTION_MOVE -> {
-                    val deltaY = if (isTop) event.y - startY else startY - event.y
-                    if (deltaY > 150) {
-                        if (!isCancelled) {
-                            isCancelled = true; triggerVibration(80)
-                            val cancelMsg = if (isTop) "🚫 Release to cancel" else "🚫 松开手指取消"
-                            setIslandState(cancelMsg, "#FF4444", isTop = isTop)
-                            button.animate().alpha(0.5f).setDuration(150).start()
-                        }
-                    } else {
-                        if (isCancelled) {
-                            isCancelled = false
-                            val msg = if (isTop) "🔴 Listening..." else "🔴 翻译员正在聆听..."
-                            setIslandState(msg, "#FF4444", isTop = isTop)
-                            button.animate().alpha(1.0f).setDuration(150).start()
-                        }
-                    }
-                    true
-                }
+
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                     bg.setStroke(6, Color.parseColor(originalColor))
                     button.setTextColor(Color.parseColor(originalColor))
@@ -2339,22 +2873,33 @@ class MainActivity : AppCompatActivity() {
                     isProcessingAudio = true
 
                     Thread {
-                        val wavData = audioProcessor.stopAndProcess()
-                        runOnUiThread {
-                            if (isDestroyed || isFinishing) return@runOnUiThread
-                            isProcessingAudio = false
+                        try {
+                            val wavData = audioProcessor.stopAndProcess()
+                            runOnUiThread {
+                                if (isDestroyed || isFinishing) return@runOnUiThread
+                                isProcessingAudio = false // 正常解锁
 
-                            if (!isCancelled && wavData != null) {
-                                val recogMsg = if (isTop) "⏳ Recognizing..." else "⏳ 正在识别语音..."
-                                setIslandState(recogMsg, "#FFFF00", isTop = isTop)
-                                processAiPipeline(wavData, isTop)
-                            } else if (isCancelled) {
-                                val cancelMsg = if (isTop) "🚫 Cancelled" else "🚫 已取消"
-                                setIslandState(cancelMsg, "#FF4444", isTop = isTop)
-                                resetIslandDelayed()
-                            } else {
-                                val shortMsg = if (isTop) "⚠️ Too short" else "⚠️ 录音时间太短"
-                                setIslandState(shortMsg, "#FFA500", isTop = isTop)
+                                if (!isCancelled && wavData != null) {
+                                    val recogMsg = if (isTop) "⏳ Recognizing..." else "⏳ 正在识别语音..."
+                                    setIslandState(recogMsg, "#FFFF00", isTop = isTop)
+                                    processAiPipeline(wavData, isTop)
+                                } else if (isCancelled) {
+                                    val cancelMsg = if (isTop) "🚫 Cancelled" else "🚫 已取消"
+                                    setIslandState(cancelMsg, "#FF4444", isTop = isTop)
+                                    finishClassicRecordingCycle()
+                                    resetIslandDelayed()
+                                } else {
+                                    val shortMsg = if (isTop) "⚠️ Too short" else "⚠️ 录音时间太短"
+                                    setIslandState(shortMsg, "#FFA500", isTop = isTop)
+                                    finishClassicRecordingCycle()
+                                    resetIslandDelayed()
+                                }
+                            }
+                        } catch (e: Exception) {
+                            // 👇 航天级兜底：万一底层报错，强制解锁按钮，防止永久变砖
+                            runOnUiThread {
+                                isProcessingAudio = false
+                                finishClassicRecordingCycle()
                                 resetIslandDelayed()
                             }
                         }
@@ -2374,8 +2919,32 @@ class MainActivity : AppCompatActivity() {
     private fun checkAudioPermission(): Boolean = ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
     private fun requestAudioPermission() { ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.RECORD_AUDIO), 100) }
 
+    override fun onStop() {
+        super.onStop()
+        // 🌟 锁屏或退到后台时，自动切断同传，保护隐私、电量与流量
+        if (isLiveTranslateEnabled) {
+            isLiveTranslateEnabled = false
+            btnLiveTranslate.text = "同\n传" // 🌟 恢复极简的竖排
+
+            // 👇 修改这里：直接调用智能变色方法，如果有耳机就保持金光，没耳机就变灰
+            updateLiveTranslateButtonUI()
+            // 👆 修改结束
+
+            geminiLiveEngine?.stop()
+            geminiLiveEngine = null
+
+            resetIsland()
+        }
+    }
     override fun onDestroy() {
         edgeTts.stop()
+        geminiLiveEngine?.stop() // 👈 绝不遗留后台窃听器
+        // 🌟 新增：航天级善后。彻底注销掉 3 分钟的休眠定时器，防止其在 Activity 死亡后被幽灵唤醒！
+        liveEngineIdleRunnable?.let { tvDynamicIsland.removeCallbacks(it) }
+
+        // 🌟 新增：关闭文件读写的单线程池，拒绝僵尸线程占用系统内存
+        heavyTaskExecutor.shutdown()
+
         super.onDestroy()
     }
 
@@ -2449,10 +3018,11 @@ class MainActivity : AppCompatActivity() {
         setIslandState("👁️ 视觉AI正在破译...", "#00BCFF")
         triggerVibration(50)
 
-        Thread {
+        // 👇 【已修改】换成了单线程排队执行
+        heavyTaskExecutor.execute {
             try {
-                val path = uri.path ?: return@Thread
-                val bitmap = android.graphics.BitmapFactory.decodeFile(path) ?: return@Thread
+                val path = uri.path ?: return@execute // 👈 【已修改】同步更改为 return@execute
+                val bitmap = android.graphics.BitmapFactory.decodeFile(path) ?: return@execute // 👈 【已修改】同步更改为 return@execute
 
                 val sourceLangEn = AppConstants.LANG_MAP_EN[ptLangName] ?: "English"
                 val targetLangEn = AppConstants.LANG_MAP_EN[myLangName] ?: "Chinese"
@@ -2478,7 +3048,7 @@ class MainActivity : AppCompatActivity() {
                     clearVisionCache(forceWipe = true)
                 }
             }
-        }.start()
+        } // 👈 【已修改】去掉了结尾的 .start()
     }
 
     private fun showImageResultDialog(croppedBitmap: android.graphics.Bitmap?, regions: List<AiEngine.ImageRegion>) {
@@ -2846,7 +3416,7 @@ class MainActivity : AppCompatActivity() {
                 val newArray = org.json.JSONArray()
                 newArray.put(newObj)
                 for (i in 0 until array.length()) newArray.put(array.getJSONObject(i))
-                sharedPrefs.edit().putString("kane_notebook_data", newArray.toString()).apply()
+                heavyTaskExecutor.execute { try { java.io.File(filesDir, "kane_notebook.json").writeText(newArray.toString(), Charsets.UTF_8) } catch (e: Exception) {} }
 
                 val originalText = "存入笔记"
                 val originalBg = btnSaveNote.background
@@ -2914,7 +3484,8 @@ class MainActivity : AppCompatActivity() {
                                 when (which) {
                                     0 -> {
                                         val voiceId = getSmartVoiceId(myVoiceName, myLangName)
-                                        edgeTts.speak(currentText, voiceId,
+                                        // 🌟 听从全局开关：因为这不算“对方的话”，所以不强制拦截，直接传 false
+                                        edgeTts.speak(currentText, voiceId, false,
                                             onNodeSelected = {},
                                             onStart = { runOnUiThread { Toast.makeText(context, "🔊 播报中...", Toast.LENGTH_SHORT).show() } },
                                             onDone = {}
@@ -2956,14 +3527,15 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun clearVisionCache(forceWipe: Boolean = false) {
-        Thread {
+        // 👇 【已修改】换成了单线程排队执行
+        heavyTaskExecutor.execute {
             try {
                 val cacheFolder = java.io.File(cacheDir, "kane_vision_cache")
                 if (cacheFolder.exists()) {
                     if (forceWipe) {
                         cacheFolder.deleteRecursively()
                     } else {
-                        val files = cacheFolder.listFiles() ?: return@Thread
+                        val files = cacheFolder.listFiles() ?: return@execute // 👈 【已修改】同步更改为 return@execute
                         val now = System.currentTimeMillis()
                         for (file in files) {
                             if (now - file.lastModified() > 10 * 60 * 1000) file.delete()
@@ -2971,7 +3543,7 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
             } catch (e: Exception) {}
-        }.start()
+        } // 👈 【已修改】去掉了结尾的 .start()
     }
     // =================================================================================
     // 🌟 核心重构：彻底废弃谷歌网盘明文通道，全量走 GitHub CDN，并接入 AES 防白嫖与跳过更新机制
@@ -3256,8 +3828,13 @@ class MainActivity : AppCompatActivity() {
         setIslandState("⏳ 正在重译修正...", "#FFFF00")
 
         aiEngine.translateText(newOriginalText, llmSourceEn, llmTargetEn,
-            onFallback = {
-                runOnUiThread { setIslandState("⚠️ 切换备用引擎重译...", "#FFA500") }
+            onFallback = { isModelDead ->
+                runOnUiThread {
+                    setIslandState("⚠️ 切换备用引擎重译...", "#FFA500")
+                    if (isModelDead) {
+                        Toast.makeText(this@MainActivity, "🚨 当前模型已失效下架！请去设置拉取最新模型库。", Toast.LENGTH_LONG).show()
+                    }
+                }
             }
         ) { llmSuccess, translated, engineName ->
             if (isDestroyed || isFinishing) return@translateText
@@ -3272,7 +3849,8 @@ class MainActivity : AppCompatActivity() {
 
                 // 3. 自动触发语音修正播报体验
                 if (isTtsEnabled && !oldMsg.voiceId.startsWith("hy-AM")) {
-                    edgeTts.speak(translated, oldMsg.voiceId,
+                    val forceHeadset = isTop && isHeadsetPluggedIn() // 🌟 强制私密播报
+                    edgeTts.speak(translated, oldMsg.voiceId, forceHeadset,
                         onNodeSelected = { nodeName -> runOnUiThread { setIslandState("🎵 准备发音 [$nodeName]", "#00BCFF", animatePop = false) } },
                         onStart = {
                             setIslandState("🔊   修正播报中   ⏹️ ", "#00FF00", isTop = false)
@@ -3296,12 +3874,26 @@ class MainActivity : AppCompatActivity() {
     // 🧠 核心外脑数据与子弹窗处理器
     // ==========================================
     private fun getNotebookData(): org.json.JSONArray {
-        val jsonStr = sharedPrefs.getString("kane_notebook_data", "[]") ?: "[]"
-        return try { org.json.JSONArray(jsonStr) } catch (e: Exception) { org.json.JSONArray() }
+        val file = java.io.File(filesDir, "kane_notebook.json")
+        if (file.exists()) {
+            return try {
+                org.json.JSONArray(file.readText(Charsets.UTF_8))
+            } catch (e: Exception) { org.json.JSONArray() }
+        } else {
+            // 🌟 无缝迁移机制：如果是老版本，把旧的 SP 数据搬运到无限容量的文件里
+            val oldData = sharedPrefs.getString("kane_notebook_data", "[]") ?: "[]"
+            if (oldData != "[]") {
+                try {
+                    file.writeText(oldData, Charsets.UTF_8)
+                    sharedPrefs.edit().remove("kane_notebook_data").apply() // 卸下炸弹，释放内存
+                } catch (e: Exception) {}
+            }
+            return try { org.json.JSONArray(oldData) } catch (e: Exception) { org.json.JSONArray() }
+        }
     }
     private fun exportNotebook() {
         try {
-            val data = sharedPrefs.getString("kane_notebook_data", "[]") ?: "[]"
+            val data = getNotebookData().toString()
             // 复用视觉引擎已经开辟好的缓存沙盒，系统免权放行
             val cacheFolder = java.io.File(cacheDir, "kane_vision_cache")
             if (!cacheFolder.exists()) cacheFolder.mkdirs()
@@ -3325,7 +3917,7 @@ class MainActivity : AppCompatActivity() {
         setIslandState("⏳ 正在读取备份...", "#00BCFF")
 
         // 🛡️ 航天级防御 3：强制在子线程执行 I/O 读取，彻底告别主线程 ANR 崩溃
-        Thread {
+        heavyTaskExecutor.execute { // 👈 【已修改】换成了单线程排队执行
             try {
                 // 🛡️ 航天级防御 1.1：前置体积侦测。超大文件直接阻断，不给它吃内存的机会
                 var fileSize = 0L
@@ -3342,7 +3934,7 @@ class MainActivity : AppCompatActivity() {
                         Toast.makeText(this@MainActivity, "⚠️ 文件过大，拒绝读取！请选择正确的 KANE 备份文件", Toast.LENGTH_LONG).show()
                         resetIslandDelayed()
                     }
-                    return@Thread
+                    return@execute // 👈 【已修改】同步更改为 return@execute
                 }
 
                 // 安全读取流
@@ -3357,7 +3949,7 @@ class MainActivity : AppCompatActivity() {
                         Toast.makeText(this@MainActivity, "⚠️ 导入中止：该备份文件内容为空", Toast.LENGTH_SHORT).show()
                         resetIslandDelayed()
                     }
-                    return@Thread
+                    return@execute // 👈 【已修改】同步更改为 return@execute
                 }
 
                 // 读取成功后，切回主线程展示策略选择弹窗
@@ -3373,7 +3965,7 @@ class MainActivity : AppCompatActivity() {
                     resetIslandDelayed()
                 }
             }
-        }.start()
+        } // 👈 【已修改】因为用了 execute，所以去掉了结尾的 .start()
     }
 
     private fun showImportStrategyDialog(importedArray: org.json.JSONArray) {
@@ -3390,75 +3982,218 @@ class MainActivity : AppCompatActivity() {
             .setNegativeButton("取消", null)
             .show()
     }
+    // ==========================================
+    // 🌟 赛博跳变引擎：UI 悬停与自动回弹机制
+    // ==========================================
+    private var volumeUiReboundRunnable: Runnable? = null
+
+    private fun updateVolumeUI(isHeadset: Boolean, percent: Int, islandText: String, islandColor: String, autoRebound: Boolean) {
+        volumeUiReboundRunnable?.let { tvDynamicIsland.removeCallbacks(it) }
+
+        val colorHex = if (isHeadset) "#00E676" else "#00BCFF"
+        val parsedColor = android.graphics.Color.parseColor(colorHex)
+
+        btnTtsRoute.text = if (isHeadset) "🎧\n耳\n机" else "🔈\n外\n放"
+        btnTtsRoute.setTextColor(parsedColor)
+        (btnTtsRoute.background as GradientDrawable).setStroke(2, parsedColor)
+
+        seekbarTtsVolume.progressTintList = android.content.res.ColorStateList.valueOf(parsedColor)
+        seekbarTtsVolume.thumbTintList = android.content.res.ColorStateList.valueOf(parsedColor)
+
+        seekbarTtsVolume.progress = percent
+        setIslandState(islandText, colorHex, animatePop = false, isTop = false)
+
+        if (autoRebound) {
+            volumeUiReboundRunnable = Runnable { restoreVolumeUI() }
+            tvDynamicIsland.postDelayed(volumeUiReboundRunnable, 1500L)
+        } else {
+            resetIslandDelayed(1500L)
+        }
+    }
+
+    private fun restoreVolumeUI() {
+        val am = getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
+        if (edgeTts.isSpeakerRoute) {
+            val color = android.graphics.Color.parseColor("#00BCFF")
+            btnTtsRoute.text = "🔈\n外\n放"
+            btnTtsRoute.setTextColor(color)
+            (btnTtsRoute.background as GradientDrawable).setStroke(2, color)
+            seekbarTtsVolume.progressTintList = android.content.res.ColorStateList.valueOf(color)
+            seekbarTtsVolume.thumbTintList = android.content.res.ColorStateList.valueOf(color)
+
+            seekbarTtsVolume.progress = edgeTts.speakerVolume
+            setIslandState("🔈 恢复外放指示：${edgeTts.speakerVolume}%", "#00BCFF", animatePop = true, isTop = false)
+            resetIslandDelayed(1000L)
+        } else {
+            val color = android.graphics.Color.parseColor("#00E676")
+            btnTtsRoute.text = "🎧\n耳\n机"
+            btnTtsRoute.setTextColor(color)
+            (btnTtsRoute.background as GradientDrawable).setStroke(2, color)
+            seekbarTtsVolume.progressTintList = android.content.res.ColorStateList.valueOf(color)
+            seekbarTtsVolume.thumbTintList = android.content.res.ColorStateList.valueOf(color)
+
+            val maxVol = am.getStreamMaxVolume(android.media.AudioManager.STREAM_MUSIC)
+            val currentVol = am.getStreamVolume(android.media.AudioManager.STREAM_MUSIC)
+            val percent = ((currentVol.toFloat() / maxVol) * 100).toInt()
+            seekbarTtsVolume.progress = percent
+
+            setIslandState("🎧 恢复耳机指示：$percent%", "#00E676", animatePop = true, isTop = false)
+            resetIslandDelayed(1000L)
+        }
+    }
+
+    // ==========================================
+    // 🧠 终极无死角音量按键 ( +/- ) 劫持状态机
+    // ==========================================
+    override fun onKeyDown(keyCode: Int, event: android.view.KeyEvent?): Boolean {
+        if (keyCode == android.view.KeyEvent.KEYCODE_VOLUME_UP || keyCode == android.view.KeyEvent.KEYCODE_VOLUME_DOWN) {
+            val am = getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
+            val direction = if (keyCode == android.view.KeyEvent.KEYCODE_VOLUME_UP) 1 else -1
+
+            // 🥇 第一优先级：TTS 正在发声中 (绝对精准打击：谁在出声调谁)
+            if (edgeTts.isSpeaking) {
+                // 🌟 核心判断：利用引擎内部刚计算出的“真实发声通道”
+                val actualSpeakerRoute = edgeTts.isSpeakerRoute && !edgeTts.isPrivacyModeActive
+
+                if (actualSpeakerRoute) {
+                    val maxVol = am.getStreamMaxVolume(android.media.AudioManager.STREAM_ALARM)
+                    var currentVol = am.getStreamVolume(android.media.AudioManager.STREAM_ALARM)
+                    currentVol = (currentVol + direction).coerceIn(0, maxVol)
+                    am.setStreamVolume(android.media.AudioManager.STREAM_ALARM, currentVol, 0)
+                    val percent = ((currentVol.toFloat() / maxVol) * 100).toInt()
+
+                    edgeTts.speakerVolume = percent // 记忆同步
+                    sharedPrefs.edit().putInt("tts_speaker_volume", percent).apply()
+                    updateVolumeUI(isHeadset = false, percent = percent, islandText = "🔊 正在播报(外放)：$percent%", islandColor = "#00BCFF", autoRebound = false)
+                } else {
+                    val maxVol = am.getStreamMaxVolume(android.media.AudioManager.STREAM_MUSIC)
+                    var currentVol = am.getStreamVolume(android.media.AudioManager.STREAM_MUSIC)
+                    currentVol = (currentVol + direction).coerceIn(0, maxVol)
+                    am.setStreamVolume(android.media.AudioManager.STREAM_MUSIC, currentVol, 0)
+                    val percent = ((currentVol.toFloat() / maxVol) * 100).toInt()
+
+                    // 🌟 智能跳变与回弹：如果 UI 拨在外放，但被隐私模式强制拉到了耳机，调完必须回弹外放UI！
+                    val needsRebound = edgeTts.isSpeakerRoute
+                    updateVolumeUI(isHeadset = true, percent = percent, islandText = "🎧 正在播报(耳机)：$percent%", islandColor = "#00E676", autoRebound = needsRebound)
+                }
+                return true
+            }
+
+            // 🥈 第二优先级：同传模式运行中 (同传必定走耳机 MUSIC 流)
+            if (isLiveTranslateEnabled) {
+                val maxVol = am.getStreamMaxVolume(android.media.AudioManager.STREAM_MUSIC)
+                var currentVol = am.getStreamVolume(android.media.AudioManager.STREAM_MUSIC)
+                currentVol = (currentVol + direction).coerceIn(0, maxVol)
+                am.setStreamVolume(android.media.AudioManager.STREAM_MUSIC, currentVol, 0)
+                val percent = ((currentVol.toFloat() / maxVol) * 100).toInt()
+
+                val needsRebound = edgeTts.isSpeakerRoute
+                updateVolumeUI(isHeadset = true, percent = percent, islandText = "🎧 同传音量：$percent%", islandColor = "#00E676", autoRebound = needsRebound)
+                return true
+            }
+
+            // 🥉 第三优先级：闲置状态 (严格跟随 UI 路由开关，废弃跳变魔法)
+            if (edgeTts.isSpeakerRoute) {
+                val maxVol = am.getStreamMaxVolume(android.media.AudioManager.STREAM_ALARM)
+                val stepSize = 100f / maxVol
+                val currentGear = Math.round(edgeTts.speakerVolume / stepSize)
+                val targetGear = (currentGear + direction).coerceIn(0, maxVol)
+                val percent = (targetGear * stepSize).toInt().coerceIn(0, 100)
+
+                edgeTts.speakerVolume = percent // 记忆同步
+                sharedPrefs.edit().putInt("tts_speaker_volume", percent).apply()
+                updateVolumeUI(isHeadset = false, percent = percent, islandText = "🔈 外放预设：$percent%", islandColor = "#00BCFF", autoRebound = false)
+                return true
+            } else {
+                val maxVol = am.getStreamMaxVolume(android.media.AudioManager.STREAM_MUSIC)
+                var currentVol = am.getStreamVolume(android.media.AudioManager.STREAM_MUSIC)
+                currentVol = (currentVol + direction).coerceIn(0, maxVol)
+                am.setStreamVolume(android.media.AudioManager.STREAM_MUSIC, currentVol, 0)
+                val percent = ((currentVol.toFloat() / maxVol) * 100).toInt()
+
+                updateVolumeUI(isHeadset = true, percent = percent, islandText = "🎧 TTS耳机音量：$percent%", islandColor = "#00E676", autoRebound = false)
+                return true
+            }
+        }
+        return super.onKeyDown(keyCode, event)
+    }
 
     private fun executeImportStrategy(importedArray: org.json.JSONArray, strategy: Int) {
-        // 🛡️ 航天级防御 2.1：给整个运算逻辑穿上 try-catch 防弹衣
-        try {
-            val currentArray = getNotebookData()
-            val newArray = org.json.JSONArray()
-            val formatter = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.getDefault())
+        // 🌟 航天级防御：繁重的数据清洗、时间戳解析和排序，必须扔进单线程队列！绝不阻塞主 UI！
+        // 👇 【已修改】换成了单线程排队执行
+        heavyTaskExecutor.execute {
+            try {
+                val currentArray = getNotebookData()
+                val newArray = org.json.JSONArray()
+                val formatter = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.getDefault())
 
-            fun parseTimeSafe(timeStr: String): Long {
-                if (timeStr == "刚刚") return System.currentTimeMillis()
-                return try { formatter.parse(timeStr)?.time ?: 0L } catch (e: Exception) { 0L }
-            }
+                fun parseTimeSafe(timeStr: String): Long {
+                    if (timeStr == "刚刚") return System.currentTimeMillis()
+                    return try { formatter.parse(timeStr)?.time ?: 0L } catch (e: Exception) { 0L }
+                }
 
-            when (strategy) {
-                0 -> { // 🧠 智能合并
-                    val mergedMap = mutableMapOf<String, org.json.JSONObject>()
-                    // 读取本地
-                    for (i in 0 until currentArray.length()) {
-                        // 🛡️ 航天级防御 2.2：使用 optJSONObject 替代 getJSONObject，如果不是对象直接跳过，绝不报错
-                        val item = currentArray.optJSONObject(i) ?: continue
-                        mergedMap[item.optString("id")] = item
+                when (strategy) {
+                    0 -> { // 🧠 智能合并
+                        val mergedMap = mutableMapOf<String, org.json.JSONObject>()
+                        // 读取本地
+                        for (i in 0 until currentArray.length()) {
+                            // 🛡️ 航天级防御 2.2：使用 optJSONObject 替代 getJSONObject，如果不是对象直接跳过，绝不报错
+                            val item = currentArray.optJSONObject(i) ?: continue
+                            mergedMap[item.optString("id")] = item
+                        }
+                        // 比对导入
+                        for (i in 0 until importedArray.length()) {
+                            val importedItem = importedArray.optJSONObject(i) ?: continue
+                            val id = importedItem.optString("id")
+                            if (id.isEmpty()) continue // 过滤掉没有 ID 的非法数据
+
+                            if (mergedMap.containsKey(id)) {
+                                val localTime = parseTimeSafe(mergedMap[id]!!.optString("timestamp", ""))
+                                val importTime = parseTimeSafe(importedItem.optString("timestamp", ""))
+                                if (importTime > localTime) mergedMap[id] = importedItem
+                            } else {
+                                mergedMap[id] = importedItem
+                            }
+                        }
+                        val sortedList = mergedMap.values.toList().sortedByDescending { parseTimeSafe(it.optString("timestamp", "")) }
+                        for (item in sortedList) newArray.put(item)
                     }
-                    // 比对导入
-                    for (i in 0 until importedArray.length()) {
-                        val importedItem = importedArray.optJSONObject(i) ?: continue
-                        val id = importedItem.optString("id")
-                        if (id.isEmpty()) continue // 过滤掉没有 ID 的非法数据
-
-                        if (mergedMap.containsKey(id)) {
-                            val localTime = parseTimeSafe(mergedMap[id]!!.optString("timestamp", ""))
-                            val importTime = parseTimeSafe(importedItem.optString("timestamp", ""))
-                            if (importTime > localTime) mergedMap[id] = importedItem
-                        } else {
-                            mergedMap[id] = importedItem
+                    1 -> { // 💥 强制覆盖
+                        for (i in 0 until importedArray.length()) {
+                            val item = importedArray.optJSONObject(i) ?: continue
+                            newArray.put(item)
                         }
                     }
-                    val sortedList = mergedMap.values.toList().sortedByDescending { parseTimeSafe(it.optString("timestamp", "")) }
-                    for (item in sortedList) newArray.put(item)
-                }
-                1 -> { // 💥 强制覆盖
-                    for (i in 0 until importedArray.length()) {
-                        val item = importedArray.optJSONObject(i) ?: continue
-                        newArray.put(item)
+                    2 -> { // ➕ 全部追加
+                        for (i in 0 until currentArray.length()) {
+                            val item = currentArray.optJSONObject(i) ?: continue
+                            newArray.put(item)
+                        }
+                        for (i in 0 until importedArray.length()) {
+                            val item = importedArray.optJSONObject(i) ?: continue
+                            item.put("id", java.util.UUID.randomUUID().toString())
+                            newArray.put(item)
+                        }
                     }
                 }
-                2 -> { // ➕ 全部追加
-                    for (i in 0 until currentArray.length()) {
-                        val item = currentArray.optJSONObject(i) ?: continue
-                        newArray.put(item)
-                    }
-                    for (i in 0 until importedArray.length()) {
-                        val item = importedArray.optJSONObject(i) ?: continue
-                        item.put("id", java.util.UUID.randomUUID().toString())
-                        newArray.put(item)
-                    }
+
+                // 数据落盘 (apply() 虽然是异步的，但序列化 toString() 很耗时，正好在子线程执行)
+                heavyTaskExecutor.execute { try { java.io.File(filesDir, "kane_notebook.json").writeText(newArray.toString(), Charsets.UTF_8) } catch (e: Exception) {} }
+
+                // 运算完成，切回主线程播放动画和刷新 UI
+                runOnUiThread {
+                    if (isDestroyed || isFinishing) return@runOnUiThread
+                    triggerVibration(50)
+                    Toast.makeText(this@MainActivity, "🎉 笔记导入成功！", Toast.LENGTH_SHORT).show()
+                    activeNotebookCallback?.let { showNotebookSubDialog(it) }
+                }
+
+            } catch (e: Exception) {
+                runOnUiThread {
+                    Toast.makeText(this@MainActivity, "⚠️ 数据清洗失败，备份文件中可能包含不合规的幽灵数据", Toast.LENGTH_LONG).show()
                 }
             }
-
-            // 数据落盘
-            sharedPrefs.edit().putString("kane_notebook_data", newArray.toString()).apply()
-            triggerVibration(50)
-            Toast.makeText(this, "🎉 笔记导入成功！", Toast.LENGTH_SHORT).show()
-
-            activeNotebookCallback?.let { showNotebookSubDialog(it) }
-
-        } catch (e: Exception) {
-            // 🛡️ 终极兜底：如果有任何未知的格式问题，阻断崩溃，友善提示用户
-            Toast.makeText(this, "⚠️ 数据清洗失败，备份文件中可能包含不合规的幽灵数据", Toast.LENGTH_LONG).show()
-        }
+        } // 👈 【已修改】因为用了 execute，去掉了结尾的 .start()
     }
 
     private fun showNotebookSubDialog(onItemClicked: (String) -> Unit) {
@@ -3574,7 +4309,7 @@ class MainActivity : AppCompatActivity() {
             for (item in notebookItems) {
                 newArray.put(item)
             }
-            sharedPrefs.edit().putString("kane_notebook_data", newArray.toString()).apply()
+            heavyTaskExecutor.execute { try { java.io.File(filesDir, "kane_notebook.json").writeText(newArray.toString(), Charsets.UTF_8) } catch (e: Exception) {} }
         }
 
         class NotebookAdapter : androidx.recyclerview.widget.RecyclerView.Adapter<NotebookAdapter.ViewHolder>() {
@@ -3717,9 +4452,8 @@ class MainActivity : AppCompatActivity() {
                                 0 -> copyToClipboard("笔记", content)
                                 1 -> showEditNotebookDialog(id, title, content) { refreshList() }
                                 2 -> {
-                                    deleteNotebookEntry(id)
-                                    refreshList()
                                     triggerVibration(30)
+                                    deleteNotebookEntry(id) { refreshList() } // 🌟 将刷新放进回调里
                                 }
                             }
                         }.show()
@@ -3735,7 +4469,10 @@ class MainActivity : AppCompatActivity() {
                     triggerVibration(40)
                     dialog?.dismiss()
                     currentTextInputDialog?.dismiss()
-                    processTextPipeline(content, isTop = false)
+                    // 🌟 核心修复：不再写死 isTop = false，而是根据呼出时的面板焦点智能判断！
+                    // 如果是从上方蓝框点开的，它就是 true (发给中文)
+                    // 如果是从下方绿框点开，或者是长按呼出的，它就是 false (发给外语)
+                    processTextPipeline(content, isTop = lastActiveInputIsTop)
                 }
             }
 
@@ -3824,14 +4561,17 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun deleteNotebookEntry(targetId: String) {
+    private fun deleteNotebookEntry(targetId: String, onDeleted: () -> Unit) {
         val array = getNotebookData()
         val newArray = org.json.JSONArray()
         for (i in 0 until array.length()) {
             val item = array.getJSONObject(i)
             if (item.optString("id") != targetId) newArray.put(item)
         }
-        sharedPrefs.edit().putString("kane_notebook_data", newArray.toString()).apply()
+        heavyTaskExecutor.execute {
+            try { java.io.File(filesDir, "kane_notebook.json").writeText(newArray.toString(), Charsets.UTF_8) } catch (e: Exception) {}
+            runOnUiThread { onDeleted() } // 🌟 等删完写进硬盘再回调
+        }
     }
 
     private fun showEditNotebookDialog(targetId: String, oldTitle: String, oldContent: String, onUpdated: () -> Unit) {
@@ -3922,7 +4662,12 @@ class MainActivity : AppCompatActivity() {
                         for (i in 0 until array.length()) {
                             newArray.put(array.getJSONObject(i))
                         }
-                        sharedPrefs.edit().putString("kane_notebook_data", newArray.toString()).apply()
+
+                        // 🌟 核心修复：等子线程文件真正写完落盘后，再切回主线程刷新 UI 列表
+                        heavyTaskExecutor.execute {
+                            try { java.io.File(filesDir, "kane_notebook.json").writeText(newArray.toString(), Charsets.UTF_8) } catch (e: Exception) {}
+                            runOnUiThread { onUpdated() }
+                        }
                     } else {
                         // ✏️ 编辑模式：正常比对并保存
                         for (i in 0 until array.length()) {
@@ -3933,9 +4678,13 @@ class MainActivity : AppCompatActivity() {
                                 break
                             }
                         }
-                        sharedPrefs.edit().putString("kane_notebook_data", array.toString()).apply()
+
+                        // 🌟 核心修复：等子线程文件真正写完落盘后，再切回主线程刷新 UI 列表
+                        heavyTaskExecutor.execute {
+                            try { java.io.File(filesDir, "kane_notebook.json").writeText(array.toString(), Charsets.UTF_8) } catch (e: Exception) {}
+                            runOnUiThread { onUpdated() }
+                        }
                     }
-                    onUpdated() // 自动重渲染当前页面
                 } else {
                     Toast.makeText(context, "⚠️ 名称和内容均不能为空", Toast.LENGTH_SHORT).show()
                 }
@@ -4145,14 +4894,45 @@ class MainActivity : AppCompatActivity() {
             .setTitle("⚠️ 警告")
             .setMessage("确定要清空当前的快捷笔记本吗？此操作将抹除所有记录且无法撤销！")
             .setPositiveButton("确定清空") { _, _ ->
-                sharedPrefs.edit().putString("kane_notebook_data", "[]").apply()
-                triggerVibration(60)
-                Toast.makeText(this, "🧹 笔记本已全部清空", Toast.LENGTH_SHORT).show()
-                onCleared()
+                heavyTaskExecutor.execute {
+                    try { java.io.File(filesDir, "kane_notebook.json").writeText("[]", Charsets.UTF_8) } catch (e: Exception) {}
+                    runOnUiThread {
+                        triggerVibration(60)
+                        Toast.makeText(this@MainActivity, "🧹 笔记本已全部清空", Toast.LENGTH_SHORT).show()
+                        onCleared() // 🌟 等文件真正被抹除后，再清空列表 UI
+                    }
+                }
             }
             .setNegativeButton("取消", null)
             .show()
     }
+    // 👇 将最底部的这个函数整段替换：
+    private fun updateLiveTranslateButtonUI() {
+        if (isHeadsetPluggedIn()) {
+            // 🌟 插入耳机：进入耀眼流金状态
+            btnLiveTranslate.setTextColor(android.graphics.Color.WHITE)
+            btnLiveTranslate.setShadowLayer(12f, 0f, 0f, android.graphics.Color.parseColor("#FFD700"))
+
+            // 🐛 核心修复：直接赋予一个新的圆形底板，绝不报错
+            btnLiveTranslate.background = android.graphics.drawable.GradientDrawable().apply {
+                shape = android.graphics.drawable.GradientDrawable.OVAL // 👈 这句救命代码补回来了
+                setStroke(5, android.graphics.Color.parseColor("#FFD700"))
+                setColor(android.graphics.Color.parseColor("#1A1A1B"))
+            }
+        } else {
+            // 🌚 拔掉耳机：进入暗灰失联状态
+            btnLiveTranslate.setTextColor(android.graphics.Color.parseColor("#666666"))
+            btnLiveTranslate.setShadowLayer(0f, 0f, 0f, android.graphics.Color.TRANSPARENT)
+
+            // 🐛 核心修复：同上
+            btnLiveTranslate.background = android.graphics.drawable.GradientDrawable().apply {
+                shape = android.graphics.drawable.GradientDrawable.OVAL // 👈 这句救命代码补回来了
+                setStroke(2, android.graphics.Color.parseColor("#333333"))
+                setColor(android.graphics.Color.parseColor("#121212"))
+            }
+        }
+    }
+    // 👆 替换到这里结束
 
 }
 // 🌟 放在 MainActivity.kt 文件的绝对最末尾
@@ -4201,4 +4981,5 @@ class StrokeTextView(context: Context) : androidx.appcompat.widget.AppCompatText
             super.onDraw(canvas)
         }
     }
+
 }

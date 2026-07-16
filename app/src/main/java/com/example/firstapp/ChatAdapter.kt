@@ -17,7 +17,7 @@ class ChatAdapter(
     private val messages: MutableList<ChatMessage> = mutableListOf(),
     private val onMessageLongClick: (ChatMessage) -> Unit,
     private val onMessageDoubleTap: (ChatMessage) -> Unit,
-    private val onPlayClick: (String, String) -> Unit,
+    private val onPlayClick: (String, String, Boolean) -> Unit, // 🌟 增加 Boolean 接收身份
     private val onEditClick: (ChatMessage) -> Unit
 ) : RecyclerView.Adapter<ChatAdapter.ChatViewHolder>() {
 
@@ -53,6 +53,16 @@ class ChatAdapter(
             notifyItemChanged(index)
         }
     }
+    // 👇 🌟 这是需要新增的“气泡消除术”代码，直接复制粘贴到这里：
+    fun removeMessageById(targetId: String) {
+        val index = messages.indexOfFirst { it.id == targetId }
+        if (index != -1) {
+            messages.removeAt(index)         // 从数据源中删掉这个气泡
+            animatedIds.remove(targetId)     // 清除动画记忆，保持干净
+            notifyItemRemoved(index)         // 通知界面平滑移除
+        }
+    }
+    // 👆 新增结束
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ChatViewHolder {
         val context = parent.context
@@ -201,7 +211,7 @@ class ChatAdapter(
         }
 
         holder.btnPlay.setOnClickListener {
-            onPlayClick(msg.translatedText, msg.voiceId)
+            onPlayClick(msg.translatedText, msg.voiceId, msg.isTopSpeaker) // 🌟 传出发言人身份
         }
 
         // ==========================================
@@ -227,6 +237,10 @@ class ChatAdapter(
                 }
                 .start()
         } else {
+            // 🌟 核心修复 2：强行打断并销毁残留在这块复用气泡上的幽灵动画！
+            holder.bubbleWrapper.animate().cancel()
+            holder.sweepLayer.animate().cancel()
+
             // 🛡️ 状态复位：消除复用时的所有幽灵特效
             holder.bubbleWrapper.alpha = 1f
             holder.bubbleWrapper.scaleX = 1f

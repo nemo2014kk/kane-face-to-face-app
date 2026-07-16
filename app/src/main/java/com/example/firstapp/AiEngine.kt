@@ -13,9 +13,10 @@ class AiEngine {
     var groqApiKey: String = ""
     var geminiApiKey: String = ""
 
-    var currentGroqModel: String = "qwen/qwen3-32b"
-    var currentGeminiModel: String = "gemini-3.1-flash-lite" // 🌟 修复：改为指定的最新默认模型
-    var currentGroqAsrModel: String = "whisper-large-v3" // 🌟 默认启用高精度的满血版引擎
+    var currentGroqModel: String = "openai/gpt-oss-120b" // 🌟 紧急热更：应对 Qwen 下架，切换为官方推荐的 GPT OSS
+    var currentGeminiModel: String = "gemini-3.1-flash-lite" // 🌟 视觉/翻译专属
+    var currentGeminiLiveModel: String = "gemini-3.5-live-translate-preview" // 🌟 实时同传专属
+    var currentGroqAsrModel: String = "whisper-large-v3"
 
     // 🌟 核心调优 1：专门为 AI 多模态大模型放宽的宽带级超时设置
     private val client = OkHttpClient.Builder()
@@ -95,9 +96,9 @@ class AiEngine {
         }.start()
     }
 
-    fun fetchGeminiModels(callback: (Boolean, List<String>) -> Unit) {
+    fun fetchGeminiModels(callback: (Boolean, List<String>, List<String>) -> Unit) {
         if (geminiApiKey.isBlank()) {
-            mainHandler.post { callback(false, emptyList()) }
+            mainHandler.post { callback(false, emptyList(), emptyList()) }
             return
         }
         val request = Request.Builder()
@@ -107,7 +108,7 @@ class AiEngine {
 
         client.newCall(request).enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
-                mainHandler.post { callback(false, emptyList()) }
+                mainHandler.post { callback(false, emptyList(), emptyList()) }
             }
             override fun onResponse(call: Call, response: Response) {
                 val resStr = response.body?.string() ?: ""
@@ -115,27 +116,49 @@ class AiEngine {
                     if (response.isSuccessful) {
                         try {
                             val dataArray = JSONObject(resStr).getJSONArray("models")
-                            val models = mutableListOf<String>()
+                            val visionModels = mutableListOf<String>() // 视觉文本盒子
+                            val liveModels = mutableListOf<String>()   // 同传专用盒子
+
                             for (i in 0 until dataArray.length()) {
                                 val modelObj = dataArray.getJSONObject(i)
+                                val name = modelObj.getString("name").replace("models/", "")
+                                if (!name.contains("gemini")) continue
+
                                 val methods = modelObj.optJSONArray("supportedGenerationMethods")
                                 var supportsGenerate = false
+                                var supportsBidi = false // WebSocket 实时同传协议
+
                                 if (methods != null) {
                                     for (j in 0 until methods.length()) {
-                                        if (methods.getString(j) == "generateContent") supportsGenerate = true
+                                        val method = methods.getString(j)
+                                        if (method == "generateContent") supportsGenerate = true
+                                        if (method == "bidiGenerateContent") supportsBidi = true
                                     }
                                 }
-                                if (supportsGenerate) {
-                                    val name = modelObj.getString("name").replace("models/", "")
-                                    if (name.contains("gemini")) models.add(name)
+
+                                // 🌟 智能分流：支持 Bidi 协议或者名字里带 live 的扔进同传盒子
+                                if (supportsBidi || name.contains("live", ignoreCase = true)) {
+                                    liveModels.add(name)
+                                }
+                                // 其他的常规模型扔进视觉文本盒子
+                                if (supportsGenerate && !name.contains("live", ignoreCase = true)) {
+                                    visionModels.add(name)
                                 }
                             }
-                            models.sort()
-                            callback(true, models)
+
+                            // 👇 🌟 核心破壁：强制注入官方文档中隐藏的 Preview 预览版模型
+                            if (!liveModels.contains("gemini-3.5-live-translate-preview")) {
+                                liveModels.add("gemini-3.5-live-translate-preview")
+                            }
+                            // 👆 注入结束
+
+                            visionModels.sort()
+                            liveModels.sort()
+                            callback(true, visionModels, liveModels)
                         } catch (e: Exception) {
-                            callback(false, emptyList())
+                            callback(false, emptyList(), emptyList())
                         }
-                    } else callback(false, emptyList())
+                    } else callback(false, emptyList(), emptyList())
                 }
             }
         })
@@ -189,8 +212,17 @@ class AiEngine {
             override fun onResponse(call: Call, response: Response) {
                 val resStr = response.body?.string() ?: ""
                 mainHandler.post {
-                    if (response.isSuccessful) callback(true, JSONObject(resStr).optString("text", ""))
-                    else callback(false, "ASR错误: ${response.code}")
+                    if (response.isSuccessful) {
+                        callback(true, JSONObject(resStr).optString("text", ""))
+                    } else {
+                        // 🌟 精准提取 Whisper 语音模型下架的真实报错
+                        var errorMsg = "ASR错误: ${response.code}"
+                        try {
+                            val errObj = JSONObject(resStr).optJSONObject("error")
+                            if (errObj != null) errorMsg = errObj.optString("message", errorMsg)
+                        } catch (e: Exception) {}
+                        callback(false, errorMsg)
+                    }
                 }
             }
         })
@@ -200,7 +232,7 @@ class AiEngine {
         text: String,
         sourceLang: String,
         targetLang: String,
-        onFallback: () -> Unit,
+        onFallback: (Boolean) -> Unit, // 👈 增加标志，通知 UI 引擎是否死于模型下架
         callback: (Boolean, String, String) -> Unit
     ) {
         if (groqApiKey.isNotBlank()) {
@@ -208,11 +240,18 @@ class AiEngine {
                 if (success) {
                     callback(true, result, "Groq")
                 } else {
-                    onFallback()
+                    // 🌟 雷达嗅探：判断是否因为模型下架导致
+                    val isModelDead = result.contains("model", ignoreCase = true) &&
+                        (result.contains("not exist", ignoreCase = true) ||
+                         result.contains("not found", ignoreCase = true) ||
+                         result.contains("404"))
+
+                    onFallback(isModelDead) // 触动警报器
                     fallbackToGemini(text, sourceLang, targetLang, callback)
                 }
             }
         } else {
+            onFallback(false)
             fallbackToGemini(text, sourceLang, targetLang, callback)
         }
     }
@@ -255,10 +294,8 @@ class AiEngine {
         val json = JSONObject().apply {
             put("model", currentGroqModel)
             put("temperature", 0.1)
-            // ⚡ 黄金平衡点：1024 Tokens
-            // 完美吃下 3 分钟的翻译文本，同时在 Groq 云端依然被判定为"轻量任务"，
-            // 继续享受毫无排队感的极速并发红利！
-            put("max_tokens", 1024)
+            // 🌟 升级：为 Qwen 等深度思考大模型放宽限制到 2048，防止思考到一半被憋死
+            put("max_tokens", 2048)
             put("messages", org.json.JSONArray().put(JSONObject().apply {
                 put("role", "system"); put("content", sysPrompt)
             }).put(JSONObject().apply { put("role", "user"); put("content", text) }))
@@ -277,26 +314,66 @@ class AiEngine {
                     if (response.isSuccessful) {
                         try {
                             val jsonObj = JSONObject(resStr)
-                            var translated = jsonObj.optJSONArray("choices")
+                            // 1. 保留最原始的数据，作为兜底底牌
+                            val rawOutput = jsonObj.optJSONArray("choices")
                                 ?.optJSONObject(0)?.optJSONObject("message")
                                 ?.optString("content", "")?.trim() ?: ""
 
-                            // 🌟 修复：安全移除深度思考模型的 <think> 标签，抛弃高危正则替换
-                            var startIdx = translated.indexOf("<think>")
-                            var endIdx = translated.indexOf("</think>")
-                            while (startIdx != -1 && endIdx != -1 && endIdx > startIdx) {
-                                translated = translated.removeRange(startIdx, endIdx + 8)
-                                startIdx = translated.indexOf("<think>")
-                                endIdx = translated.indexOf("</think>")
+                            // 🌟 核心排错 1：深度推理模型截断侦测
+                            // 如果发现有 <think> 但没有闭合标签 </think>，说明模型由于超时或达到 max_tokens 被强行掐断了！
+                            // 此时绝不能返回空字符串（否则主界面会误判为杂音），必须直接抛出 false，强制激活外层的 Gemini 备用引擎完美接管！
+                            if (rawOutput.contains("<think>", ignoreCase = true) && !rawOutput.contains("</think>", ignoreCase = true)) {
+                                callback(false, "大模型深度推理被截断")
+                                return@post
                             }
-                            translated = translated.trim()
 
+                            var translated = rawOutput
+
+                            // 2. 安全移除完整闭合的 <think>...</think>
+                            translated = translated.replace(Regex("<think>.*?</think>", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)), "").trim()
+
+                            // 3. 脱壳：清理大模型由于 Prompt 约束产生的 Markdown 保护壳 (例如 ```json \n 你好 \n ```)
+                            if (translated.startsWith("```")) {
+                                val firstNewLine = translated.indexOf('\n')
+                                if (firstNewLine != -1) {
+                                    translated = translated.substring(firstNewLine).trim()
+                                }
+                                if (translated.endsWith("```")) {
+                                    translated = translated.substring(0, translated.length - 3).trim()
+                                }
+                            }
+
+                            // 4. 绞杀模型泄漏的各类常见废话前缀
+                            val garbagePrefixes = listOf("translation:", "translated:", "output:", "here is the translation:", "the translation is:", "翻译：", "译文：", "输出：")
+                            for (prefix in garbagePrefixes) {
+                                if (translated.lowercase().startsWith(prefix)) {
+                                    translated = translated.substring(prefix.length).trim()
+                                    break
+                                }
+                            }
+
+                            // 5. 脱壳：清除部分模型画蛇添足加上的前后英文双引号
+                            if (translated.startsWith("\"") && translated.endsWith("\"") && translated.length >= 2) {
+                                translated = translated.substring(1, translated.length - 1).trim()
+                            }
+
+                            // 6. 标准杂音识别 (严格遵从 Prompt)
                             if (translated == "NULL") translated = ""
+
                             callback(true, translated)
+
                         } catch (e: Exception) {
-                            callback(false, "")
+                            callback(false, "解析异常")
                         }
-                    } else callback(false, "")
+                    } else {
+                        // 🌟 精准提取大模型下架或封控的真实死因
+                        var errorMsg = "Groq拒绝服务 (${response.code})"
+                        try {
+                            val errObj = JSONObject(resStr).optJSONObject("error")
+                            if (errObj != null) errorMsg = errObj.optString("message", errorMsg)
+                        } catch (e: Exception) {}
+                        callback(false, errorMsg)
+                    }
                 }
             }
         })
@@ -332,22 +409,50 @@ class AiEngine {
                     if (response.isSuccessful) {
                         try {
                             val jsonObj = JSONObject(resStr)
-                            var translated = jsonObj.optJSONArray("candidates")
+                            val rawOutput = jsonObj.optJSONArray("candidates")
                                 ?.optJSONObject(0)?.optJSONObject("content")
                                 ?.optJSONArray("parts")?.optJSONObject(0)
                                 ?.optString("text", "")?.trim() ?: ""
 
-                            // 🌟 修复：安全移除深度思考模型的 <think> 标签
-                            var startIdx = translated.indexOf("<think>")
-                            var endIdx = translated.indexOf("</think>")
-                            while (startIdx != -1 && endIdx != -1 && endIdx > startIdx) {
-                                translated = translated.removeRange(startIdx, endIdx + 8)
-                                startIdx = translated.indexOf("<think>")
-                                endIdx = translated.indexOf("</think>")
+                            // 🌟 防护 1：未闭合的 <think> 截断侦测
+                            // 如果模型因为被限流或其他原因卡死，连 </think> 都没吐出来，直接判定失败，丢弃废料
+                            if (rawOutput.contains("<think>", ignoreCase = true) && !rawOutput.contains("</think>", ignoreCase = true)) {
+                                callback(false, "Gemini 推理被截断")
+                                return@post
                             }
-                            translated = translated.trim()
 
-                            callback(true, if (translated == "NULL") "" else translated)
+                            var translated = rawOutput
+
+                            // 🌟 防护 2：安全脱去思考外壳与 Markdown 代码壳
+                            translated = translated.replace(Regex("<think>.*?</think>", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)), "").trim()
+
+                            if (translated.startsWith("```")) {
+                                val firstNewLine = translated.indexOf('\n')
+                                if (firstNewLine != -1) {
+                                    translated = translated.substring(firstNewLine).trim()
+                                }
+                                if (translated.endsWith("```")) {
+                                    translated = translated.substring(0, translated.length - 3).trim()
+                                }
+                            }
+
+                            // 🌟 防护 3：绞杀各种模型喜欢画蛇添足的废话前缀
+                            val garbagePrefixes = listOf("translation:", "translated:", "output:", "here is the translation:", "the translation is:", "翻译：", "译文：", "输出：")
+                            for (prefix in garbagePrefixes) {
+                                if (translated.lowercase().startsWith(prefix)) {
+                                    translated = translated.substring(prefix.length).trim()
+                                    break
+                                }
+                            }
+
+                            // 🌟 防护 4：脱去无意义的双引号
+                            if (translated.startsWith("\"") && translated.endsWith("\"") && translated.length >= 2) {
+                                translated = translated.substring(1, translated.length - 1).trim()
+                            }
+
+                            if (translated == "NULL") translated = ""
+
+                            callback(true, translated)
                         } catch (e: Exception) {
                             callback(false, "Gemini 解析失败")
                         }
@@ -455,23 +560,25 @@ class AiEngine {
                             if (response.isSuccessful) {
                                 try {
                                     val jsonObj = JSONObject(resStr)
-                                    var content = jsonObj.optJSONArray("candidates")
+                                    val rawOutput = jsonObj.optJSONArray("candidates")
                                         ?.optJSONObject(0)?.optJSONObject("content")
                                         ?.optJSONArray("parts")?.optJSONObject(0)
                                         ?.optString("text", "")?.trim() ?: ""
 
-                                    var startIdx = content.indexOf("<think>")
-                                    var endIdx = content.indexOf("</think>")
-                                    while (startIdx != -1 && endIdx != -1 && endIdx > startIdx) {
-                                        content = content.removeRange(startIdx, endIdx + 8)
-                                        startIdx = content.indexOf("<think>")
-                                        endIdx = content.indexOf("</think>")
-                                    }
-                                    content = content.trim()
+                                    var content = rawOutput
 
-                                    // 🌟 核心修复 4：暴力正则提取 JSON，再也不怕大模型乱加废话
+                                    content = content.replace(Regex("<think>.*?</think>", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)), "").trim()
+
+                                    if (content.contains("<think>", ignoreCase = true)) {
+                                        content = content.replace(Regex("<think>.*", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)), "").trim()
+                                    }
+
+                                    // 终极救场：如果清除完发现空了，说明 JSON 被包在思考框里了，直接从原数据里扒 JSON
+                                    val targetText = if (content.isBlank()) rawOutput else content
+
+                                    // 核心修复：暴力正则提取 JSON
                                     val regex = Regex("\\[.*\\]", RegexOption.DOT_MATCHES_ALL)
-                                    val matchResult = regex.find(content)
+                                    val matchResult = regex.find(targetText)
                                     if (matchResult != null) {
                                         content = matchResult.value
                                     } else {
@@ -479,14 +586,13 @@ class AiEngine {
                                         return@post
                                     }
 
-                                    // 核心解析：将 JSON 数组转换为对象列表
+                                    // 解析为坐标数据组
                                     val resultJson = org.json.JSONArray(content)
                                     val regions = mutableListOf<ImageRegion>()
                                     for (i in 0 until resultJson.length()) {
                                         val item = resultJson.optJSONObject(i) ?: continue
                                         val box = item.optJSONArray("box_2d")
                                         if (box != null && box.length() == 4) {
-                                            // 🌟 核心修复 5：加入 coerceIn 物理限制，防止坐标越界崩溃
                                             regions.add(ImageRegion(
                                                 ymin = box.optInt(0, 0).coerceIn(0, 1000),
                                                 xmin = box.optInt(1, 0).coerceIn(0, 1000),

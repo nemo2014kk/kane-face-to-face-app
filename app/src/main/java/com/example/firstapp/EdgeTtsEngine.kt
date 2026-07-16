@@ -2,6 +2,8 @@ package com.example.firstapp
 
 import android.content.Context
 import android.media.AudioAttributes
+import android.media.AudioFocusRequest
+import android.media.AudioManager
 import android.media.MediaPlayer
 import android.os.Handler
 import android.os.Looper
@@ -15,38 +17,40 @@ import java.io.FileOutputStream
 import java.io.IOException
 import java.util.UUID
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 
 class EdgeTtsEngine(context: Context, private val fallbackTts: TextToSpeech) {
+    var isSpeakerRoute = true
+    var speakerVolume = 100
+    var isPrivacyModeActive = false
 
-    // 🛡️ 提取全局唯一的 ApplicationContext，它与 App 同生共死，彻底断绝内存泄漏
+    val actualSpeakerRoute: Boolean
+        get() = isSpeakerRoute && !isPrivacyModeActive
+
     private val appContext = context.applicationContext
-
-    // 🌟 核心修改 1：建立与 MainActivity 共享的记忆体读取通道
     private val sharedPrefs = appContext.getSharedPreferences("KaneAiPrefs", Context.MODE_PRIVATE)
 
-    // ⚠️ 已删除写死的 PYTHON_SERVER_URL 和 KANE_SECRET_TOKEN
+    private val audioManager = appContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+    private var audioFocusRequest: AudioFocusRequest? = null
 
-    // 🌟 核心调优：专为面对面对话定制的极限防卡死机制
     private val client = OkHttpClient.Builder()
-        .connectTimeout(5, TimeUnit.SECONDS)  // 握手时间压缩到 5 秒（连不上直接放弃）
-        .readTimeout(8, TimeUnit.SECONDS)     // 读取时间压缩到 8 秒（8秒不出声，无情斩断，光速切本地 TTS 救场）
+        .connectTimeout(5, TimeUnit.SECONDS)
+        .readTimeout(8, TimeUnit.SECONDS)
         .build()
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private var mediaPlayer: MediaPlayer? = null
     private var currentCall: Call? = null
 
-    private var isCancelledManually = false
+    // 🌟 航天级加固 1：彻底废弃 boolean 标志位，引入唯一的发音任务身份证！
+    private val sessionCounter = AtomicInteger(0)
 
-    // 🌟 新增：小黑屋机制记录 (URL -> 关入时间戳)
-    // 🛡️ 航天级修复：换用线程安全的并发哈希表，杜绝因异步网络回调与主线程同时读写导致的崩溃
     private val blacklistedNodes = java.util.concurrent.ConcurrentHashMap<String, Long>()
     private var lastPingTime: Long = 0L
 
-    // 🌟 升级：0成本的集群静默唤醒器 (群发 Ping)
     fun pingServer() {
         val currentTime = System.currentTimeMillis()
-        if (currentTime - lastPingTime < 120000) return // 2分钟防抖
+        if (currentTime - lastPingTime < 120000) return
         lastPingTime = currentTime
 
         val mode = sharedPrefs.getString("tts_mode", "auto") ?: "auto"
@@ -60,13 +64,11 @@ class EdgeTtsEngine(context: Context, private val fallbackTts: TextToSpeech) {
             urlsToPing.addAll(nodes)
         }
 
-        // ⚡ 极速客制化 Client：复用连接池，仅把超时时间压榨到 3 秒
         val pingClient = client.newBuilder()
             .connectTimeout(3, TimeUnit.SECONDS)
             .readTimeout(3, TimeUnit.SECONDS)
             .build()
 
-        // 🚀 群发阅后即焚：同时唤醒列表里的所有服务器
         for (urlString in urlsToPing) {
             try {
                 val httpUrl = urlString.toHttpUrlOrNull() ?: continue
@@ -84,13 +86,13 @@ class EdgeTtsEngine(context: Context, private val fallbackTts: TextToSpeech) {
     val isSpeaking: Boolean get() = mediaPlayer?.isPlaying == true || fallbackTts.isSpeaking
 
     fun stop() {
-        isCancelledManually = true
+        // 🌟 航天级加固 2：只要调用 stop，旧身份证瞬间作废，之前所有的网络请求就算回来了也会被直接丢弃！
+        sessionCounter.incrementAndGet()
+
         currentCall?.cancel()
         currentCall = null
         try {
             mediaPlayer?.let {
-                // 🌟 这里可能会遇到 MediaPlayer 正在异步准备期间被强制调 stop 导致的抛错
-                // 没关系，直接吞掉这个 Exception 并 release，保证 App 绝不崩溃
                 if (it.isPlaying) it.stop()
                 it.release()
             }
@@ -99,48 +101,72 @@ class EdgeTtsEngine(context: Context, private val fallbackTts: TextToSpeech) {
             mediaPlayer = null
         }
         fallbackTts.stop()
+
+        restoreVolumeAndFocus()
     }
 
-    // 🌟 核心修改：新增了 onNodeSelected 回调，用于将选中的节点名字传给 UI
+    private fun restoreVolumeAndFocus() {
+        val willVolume = sharedPrefs.getInt("volume_will", -1)
+        val streamType = sharedPrefs.getInt("stream_will", AudioManager.STREAM_MUSIC)
+
+        if (willVolume != -1) {
+            audioManager.setStreamVolume(streamType, willVolume, 0)
+            sharedPrefs.edit().remove("volume_will").remove("stream_will").apply()
+        }
+
+        audioFocusRequest?.let {
+            audioManager.abandonAudioFocusRequest(it)
+            audioFocusRequest = null
+        }
+    }
+
     fun speak(
         text: String,
         voiceId: String,
+        forceHeadset: Boolean = false,
         onNodeSelected: (String) -> Unit,
         onStart: (String) -> Unit,
         onDone: () -> Unit
     ) {
-        stop()
-        isCancelledManually = false
+        stop() // 这个调用会产生一个新的身份证
 
-        // 🌟 塞尔维亚语 (拉丁) 智能文本转换拦截器
-        // 既然服务器没有拉丁播音员，我们就偷偷把拼音转换成西里尔字母，让她用母语读出来！
+        // 🌟 航天级加固 3：将本次发音的唯一身份证保存在局部变量中，供后续的所有异步回调核对！
+        val currentSessionId = sessionCounter.get()
+
+        var hasHeadset = false
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+            val devices = audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
+            for (device in devices) {
+                if (device.type == android.media.AudioDeviceInfo.TYPE_WIRED_HEADSET ||
+                    device.type == android.media.AudioDeviceInfo.TYPE_WIRED_HEADPHONES ||
+                    device.type == android.media.AudioDeviceInfo.TYPE_BLUETOOTH_A2DP ||
+                    device.type == android.media.AudioDeviceInfo.TYPE_BLE_HEADSET) {
+                    hasHeadset = true
+                    break
+                }
+            }
+        }
+        isPrivacyModeActive = forceHeadset && hasHeadset
+
         var processedText = text
         if (voiceId.startsWith("sr-RS-")) {
             val srMap = mapOf(
-                "nj" to "њ", "Nj" to "Њ", "NJ" to "Њ",
-                "lj" to "љ", "Lj" to "Љ", "LJ" to "Љ",
-                "dž" to "џ", "Dž" to "Џ", "DŽ" to "Џ",
-                "dj" to "ђ", "Dj" to "Ђ", "DJ" to "Ђ",
-                "đ" to "ђ", "Đ" to "Ђ",
-                "a" to "а", "b" to "б", "v" to "в", "g" to "г", "d" to "д",
-                "e" to "е", "ž" to "ж", "z" to "з", "i" to "и", "j" to "ј",
-                "k" to "к", "l" to "л", "m" to "м", "n" to "н", "o" to "о",
-                "p" to "п", "r" to "р", "s" to "с", "t" to "т", "ć" to "ћ",
-                "u" to "у", "f" to "ф", "h" to "х", "c" to "ц", "č" to "ч",
-                "š" to "ш",
-                "A" to "А", "B" to "Б", "V" to "В", "G" to "Г", "D" to "Д",
-                "E" to "Е", "Ž" to "Ж", "Z" to "З", "I" to "И", "J" to "Ј",
-                "K" to "К", "L" to "Л", "M" to "М", "N" to "Н", "O" to "О",
-                "P" to "П", "R" to "Р", "S" to "С", "T" to "Т", "Ć" to "Ћ",
-                "U" to "У", "F" to "Ф", "H" to "Х", "C" to "Ц", "Č" to "Ч",
-                "Š" to "Ш"
+                "nj" to "њ", "Nj" to "Њ", "NJ" to "Њ", "lj" to "љ", "Lj" to "Љ", "LJ" to "Љ",
+                "dž" to "џ", "Dž" to "Џ", "DŽ" to "Џ", "dj" to "ђ", "Dj" to "Ђ", "DJ" to "Ђ",
+                "đ" to "ђ", "Đ" to "Ђ", "a" to "а", "b" to "б", "v" to "в", "g" to "г", "d" to "д",
+                "e" to "е", "ž" to "ж", "z" to "з", "i" to "и", "j" to "ј", "k" to "к", "l" to "л",
+                "m" to "м", "n" to "н", "o" to "о", "p" to "п", "r" to "р", "s" to "с", "t" to "т",
+                "ć" to "ћ", "u" to "у", "f" to "ф", "h" to "х", "c" to "ц", "č" to "ч", "š" to "ш",
+                "A" to "А", "B" to "Б", "V" to "В", "G" to "Г", "D" to "Д", "E" to "Е", "Ž" to "Ж",
+                "Z" to "З", "I" to "И", "J" to "Ј", "K" to "К", "L" to "Л", "M" to "М", "N" to "Н",
+                "O" to "О", "P" to "П", "R" to "Р", "S" to "С", "T" to "Т", "Ć" to "Ћ", "U" to "У",
+                "F" to "Ф", "H" to "Х", "C" to "Ц", "Č" to "Ч", "Š" to "Ш"
             )
             for ((lat, cyr) in srMap) {
                 processedText = processedText.replace(lat, cyr)
             }
         }
 
-        // 🌟 动态判断模式并随机抽取可用节点
         val mode = sharedPrefs.getString("tts_mode", "auto") ?: "auto"
         var targetUrlStr = ""
         var nodeLabel = ""
@@ -152,7 +178,6 @@ class EdgeTtsEngine(context: Context, private val fallbackTts: TextToSpeech) {
             val nodes = sharedPrefs.getStringSet("tts_cached_nodes", emptySet())?.toList() ?: emptyList()
             if (nodes.isNotEmpty()) {
                 val currentTime = System.currentTimeMillis()
-                // 🧹 智能洗牌：清理刑满释放的节点
                 blacklistedNodes.entries.removeIf { currentTime - it.value > 10 * 60 * 1000 }
                 val availableNodes = nodes.filter { !blacklistedNodes.containsKey(it) }
 
@@ -168,23 +193,24 @@ class EdgeTtsEngine(context: Context, private val fallbackTts: TextToSpeech) {
         }
 
         if (nodeLabel.isNotEmpty()) {
-            mainHandler.post { onNodeSelected(nodeLabel) }
+            mainHandler.post {
+                if (sessionCounter.get() == currentSessionId) onNodeSelected(nodeLabel)
+            }
         }
 
         val currentToken = sharedPrefs.getString("tts_token", "") ?: ""
 
         if (targetUrlStr.isBlank()) {
-            fallbackPlay(processedText, voiceId, onStart, onDone, "未配置或未找到云端节点")
+            fallbackPlay(processedText, voiceId, currentSessionId, onStart, onDone, "未配置或未找到云端节点")
             return
         }
 
         val urlBuilder = targetUrlStr.toHttpUrlOrNull()?.newBuilder()
         if (urlBuilder == null) {
-            fallbackPlay(processedText, voiceId, onStart, onDone, "网址配置错误")
+            fallbackPlay(processedText, voiceId, currentSessionId, onStart, onDone, "网址配置错误")
             return
         }
 
-        // 🚀 注意：这里使用的是经过魔改翻译的 processedText！
         val url = urlBuilder
             .addQueryParameter("text", processedText)
             .addQueryParameter("voice", voiceId)
@@ -196,9 +222,10 @@ class EdgeTtsEngine(context: Context, private val fallbackTts: TextToSpeech) {
 
         var isFallbackTriggered = false
         val safeFallback: (String) -> Unit = { reason ->
-            if (!isCancelledManually && !isFallbackTriggered) {
+            // 🌟 只有当前任务未被作废时，才允许启动降级播报
+            if (sessionCounter.get() == currentSessionId && !isFallbackTriggered) {
                 isFallbackTriggered = true
-                fallbackPlay(processedText, voiceId, onStart, onDone, reason)
+                fallbackPlay(processedText, voiceId, currentSessionId, onStart, onDone, reason)
             }
         }
 
@@ -209,7 +236,11 @@ class EdgeTtsEngine(context: Context, private val fallbackTts: TextToSpeech) {
             }
 
             override fun onResponse(call: Call, response: Response) {
-                if (isCancelledManually) return
+                // 🌟 航天级加固 4：网络返回后，第一件事就是核对身份证！过期直接丢弃数据。
+                if (sessionCounter.get() != currentSessionId) {
+                    response.close()
+                    return
+                }
 
                 if (response.code == 403) {
                     mainHandler.post { safeFallback("暗号校验被拒(403)") }
@@ -239,43 +270,83 @@ class EdgeTtsEngine(context: Context, private val fallbackTts: TextToSpeech) {
                     inputStream.copyTo(fos)
                     fos.close()
                     inputStream.close()
-                    mainHandler.post { playAudio(tempFile, onStart, onDone) }
+                    mainHandler.post { playAudio(tempFile, currentSessionId, onStart, onDone) }
                 } catch (e: Exception) {
+                    tempFile.delete() // 👈 补上这一行：如果下载中途被掐断报错，立刻销毁残缺文件！
                     mainHandler.post { safeFallback("音频解码异常") }
                 }
             }
         })
     }
 
-    private fun playAudio(file: File, onStart: (String) -> Unit, onDone: () -> Unit) {
-        if (isCancelledManually) {
+    private fun playAudio(file: File, sessionId: Int, onStart: (String) -> Unit, onDone: () -> Unit) {
+        // 🌟 航天级加固 5：准备实例化 MediaPlayer 前，再次核对身份证！
+        if (sessionCounter.get() != sessionId) {
             file.delete()
             return
         }
 
         if (!file.exists() || file.length() < 100) {
             file.delete()
-            if (!isCancelledManually) onDone()
+            if (sessionCounter.get() == sessionId) onDone()
             return
         }
 
         try {
             mediaPlayer = MediaPlayer().apply {
+                val actualSpeakerRoute = isSpeakerRoute && !isPrivacyModeActive
+
+                val usage = if (actualSpeakerRoute) AudioAttributes.USAGE_ALARM else AudioAttributes.USAGE_MEDIA
+                val streamType = if (actualSpeakerRoute) AudioManager.STREAM_ALARM else AudioManager.STREAM_MUSIC
+
                 setAudioAttributes(AudioAttributes.Builder()
                     .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .setUsage(usage)
                     .build())
                 val fis = FileInputStream(file)
                 setDataSource(fis.fd)
                 fis.close()
 
-                // 🌟 核心修复：改为主线程异步准备，不再阻塞 UI
+                if (actualSpeakerRoute) {
+                    val devices = audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
+                    for (device in devices) {
+                        if (device.type == android.media.AudioDeviceInfo.TYPE_BUILTIN_SPEAKER) {
+                            this.preferredDevice = device
+                            break
+                        }
+                    }
+                }
+
                 setOnPreparedListener { mp ->
-                    if (!isCancelledManually) {
+                    // 🌟 航天级加固 6：底层音频流就绪准备发声前，最后一次核对身份证！
+                    if (sessionCounter.get() == sessionId) {
+                        val focusAttr = AudioAttributes.Builder()
+                            .setUsage(usage)
+                            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                            .build()
+                        audioFocusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
+                            .setAudioAttributes(focusAttr)
+                            .setAcceptsDelayedFocusGain(false)
+                            .setOnAudioFocusChangeListener { }
+                            .build()
+                        audioManager.requestAudioFocus(audioFocusRequest!!)
+
+                        if (actualSpeakerRoute) {
+                            val currentVol = audioManager.getStreamVolume(streamType)
+                            sharedPrefs.edit().putInt("volume_will", currentVol)
+                                .putInt("stream_will", streamType).apply()
+
+                            val maxVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_ALARM)
+                            val targetVol = (speakerVolume / 100f * maxVol).toInt()
+                            audioManager.setStreamVolume(AudioManager.STREAM_ALARM, targetVol, 0)
+                        }
+
                         mp.start()
                         onStart("🔊 微软云端播报中...")
                     } else {
+                        // 如果在准备期间用户已经切走了，直接销毁，不发出任何声音！
                         mp.release()
+                        file.delete() // 👈 补上这一行：既然不让它发声了，顺手把这个没用的录音文件销毁掉！
                     }
                 }
 
@@ -283,28 +354,30 @@ class EdgeTtsEngine(context: Context, private val fallbackTts: TextToSpeech) {
                     it.release()
                     mediaPlayer = null
                     file.delete()
-                    if (!isCancelledManually) onDone()
+                    restoreVolumeAndFocus()
+                    if (sessionCounter.get() == sessionId) onDone()
                 }
 
-                // 🛡️ 航天级修复：拦截解码器崩溃或音频焦点丢失，防止回调断链卡死灵动岛
                 setOnErrorListener { mp, _, _ ->
                     mp.release()
                     mediaPlayer = null
                     file.delete()
-                    if (!isCancelledManually) onDone()
-                    true // 返回 true 表示我们已经接管了错误处理
+                    restoreVolumeAndFocus()
+                    if (sessionCounter.get() == sessionId) onDone()
+                    true
                 }
 
-                prepareAsync() // 🚀 启动异步准备状态机
+                prepareAsync()
             }
         } catch (e: Exception) {
             file.delete()
-            if (!isCancelledManually) onDone()
+            if (sessionCounter.get() == sessionId) onDone()
         }
     }
 
-    private fun fallbackPlay(text: String, voiceId: String, onStart: (String) -> Unit, onDone: () -> Unit, reason: String) {
-        // 🌟 核心优化：将提示时长改为 LENGTH_LONG，延长一倍时间，确保看清！
+    private fun fallbackPlay(text: String, voiceId: String, sessionId: Int, onStart: (String) -> Unit, onDone: () -> Unit, reason: String) {
+        if (sessionCounter.get() != sessionId) return
+
         mainHandler.post { Toast.makeText(appContext, "⚠️ 播报质量降级: $reason", Toast.LENGTH_LONG).show() }
         try {
             val langTag = voiceId.split("-").take(2).joinToString("-")
@@ -315,7 +388,17 @@ class EdgeTtsEngine(context: Context, private val fallbackTts: TextToSpeech) {
         onStart("🔊 本地引擎播报中...")
 
         mainHandler.postDelayed({
-            if (!isCancelledManually) onDone()
+            if (sessionCounter.get() == sessionId) onDone()
         }, 2000)
+    }
+
+    fun switchRouteOnTheFly() {
+        val mp = mediaPlayer ?: return
+        if (!mp.isPlaying) return
+
+        stop()
+        mainHandler.post {
+            Toast.makeText(appContext, "🔄 路由已切换，将于下次发音生效", Toast.LENGTH_SHORT).show()
+        }
     }
 }

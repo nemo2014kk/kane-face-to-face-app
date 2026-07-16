@@ -7,74 +7,162 @@ import android.media.MediaRecorder
 import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
-import kotlin.concurrent.thread
 import kotlin.math.abs
 import kotlin.math.sqrt
 
 class AudioProcessor {
+    var audioManager: android.media.AudioManager? = null
     private var audioRecord: AudioRecord? = null
+
+    @Volatile
     private var isRecording = false
+    private var readLatch: java.util.concurrent.CountDownLatch? = null
+
+    // 🌟 航天级加固 1：幽灵线程隔离器。为每一次录音分发独立的身份证 ID
+    private val sessionCounter = java.util.concurrent.atomic.AtomicInteger(0)
+
+    // 🌟 航天级加固 2：不再使用全局唯一内存池，改为每次录音动态分配专属容器，彻底断绝交叉污染
+    @Volatile
+    private var activePcmStream: ByteArrayOutputStream? = null
+
     private val sampleRate = 16000
     private val channelConfig = AudioFormat.CHANNEL_IN_MONO
     private val audioFormat = AudioFormat.ENCODING_PCM_16BIT
     private val bufferSize = AudioRecord.getMinBufferSize(sampleRate, channelConfig, audioFormat)
 
-    private val pcmDataStream = ByteArrayOutputStream()
-
     @SuppressLint("MissingPermission")
     fun startRecording() {
-        pcmDataStream.reset()
         isRecording = true
+        val currentSessionId = sessionCounter.incrementAndGet()
+        val sessionStream = ByteArrayOutputStream()
+        activePcmStream = sessionStream
+
+        // 🌟 航天级修补：用一个局部变量把安全钟死死攥住，防止被主线程设为 null！
+        val myLatch = java.util.concurrent.CountDownLatch(1)
+        readLatch = myLatch
 
         try {
-            audioRecord = AudioRecord(MediaRecorder.AudioSource.VOICE_COMMUNICATION, sampleRate, channelConfig, audioFormat, bufferSize)
-            if (audioRecord?.state != AudioRecord.STATE_INITIALIZED) {
-                audioRecord?.release()
-                audioRecord = null
-                isRecording = false
-                return
-            }
-            audioRecord?.startRecording()
-        } catch (e: Exception) {
-            e.printStackTrace()
-            isRecording = false
-            return
-        }
+            audioManager?.stopBluetoothSco()
+            audioManager?.isBluetoothScoOn = false
+        } catch (e: Exception) {}
 
-        thread {
-            val buffer = ByteArray(bufferSize)
+        kotlin.concurrent.thread {
+            try {
+                try {
+                    audioRecord = AudioRecord(
+                        MediaRecorder.AudioSource.VOICE_RECOGNITION,
+                        sampleRate, channelConfig, audioFormat, bufferSize
+                    )
 
-            // 🛡️ 黄金平衡点：极限录音时长锁定为 3 分钟 (180秒)
-            // 算法: 采样率(16000) * 采样位数(2 byte) * 时长(180秒) ≈ 5.76 MB
-            // 完美匹配面对面交流的极限场景，彻底杜绝内存溢出
-            val maxBytes = sampleRate * 2 * 180
+                    if (audioRecord?.state != AudioRecord.STATE_INITIALIZED) {
+                        throw IllegalStateException("初次初始化失败")
+                    }
 
-            while (isRecording) {
-                val read = audioRecord?.read(buffer, 0, buffer.size) ?: 0
-                if (read > 0) {
-                    // 🛡️ 熔断机制：超过 3 分钟后开启空转保护，不再吃内存
-                    if (pcmDataStream.size() < maxBytes) {
-                        pcmDataStream.write(buffer, 0, read)
+                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P && audioManager != null) {
+                        val devices = audioManager!!.getDevices(android.media.AudioManager.GET_DEVICES_INPUTS)
+                        for (device in devices) {
+                            if (device.type == android.media.AudioDeviceInfo.TYPE_BUILTIN_MIC) {
+                                audioRecord?.preferredDevice = device
+                                break
+                            }
+                        }
+                    }
+
+                    if (!isRecording || sessionCounter.get() != currentSessionId) {
+                        throw IllegalStateException("录音任务已被取消或覆盖")
+                    }
+
+                    audioRecord?.startRecording()
+
+                    val testBuffer = ByteArray(bufferSize)
+                    val testRead = audioRecord?.read(testBuffer, 0, testBuffer.size) ?: 0
+                    var isDeadStream = true
+                    if (testRead > 0) {
+                        for (i in 0 until testRead) {
+                            if (testBuffer[i] != 0.toByte()) {
+                                isDeadStream = false
+                                break
+                            }
+                        }
+                    }
+
+                    if (testRead <= 0 || isDeadStream) {
+                        throw IllegalStateException("检测到死流或被系统挂起")
+                    } else {
+                        sessionStream.write(testBuffer, 0, testRead)
+                    }
+
+                } catch (e: Exception) {
+                    try { audioRecord?.release() } catch (ex: Exception) {}
+                    try {
+                        if (!isRecording || sessionCounter.get() != currentSessionId) return@thread
+
+                        audioRecord = AudioRecord(
+                            MediaRecorder.AudioSource.MIC,
+                            sampleRate, channelConfig, audioFormat, bufferSize
+                        )
+                        audioRecord?.startRecording()
+                    } catch (ex: Exception) {
+                        isRecording = false
+                        return@thread
                     }
                 }
+
+                // 正式进入正常的数据读取循环
+                val buffer = ByteArray(bufferSize)
+                val maxBytes = sampleRate * 2 * 180
+
+                while (isRecording && sessionCounter.get() == currentSessionId) {
+                    try {
+                        val read = audioRecord?.read(buffer, 0, buffer.size) ?: 0
+                        if (read > 0) {
+                            if (sessionStream.size() < maxBytes) {
+                                sessionStream.write(buffer, 0, read)
+                            }
+                        } else if (read < 0) {
+                            Thread.sleep(10)
+                        }
+                    } catch (e: Exception) {
+                        break
+                    }
+                }
+            } finally {
+                // 🌟 敲响专属的局部安全钟！0 毫秒完美解锁主线程！
+                myLatch.countDown()
             }
         }
     }
 
     fun stopAndProcess(): ByteArray? {
         isRecording = false
+        sessionCounter.incrementAndGet() // 🌟 航天级防线 4：强制吊销所有旧线程的身份证，让它们瞬间自杀！
+
+        // 🌟 航天级防线 5：抓取对象快照（Snapshot Pattern），防止交接时的空指针或死锁
+        val latchToWait = readLatch
+        val recordToRelease = audioRecord
+        val streamToRead = activePcmStream
+
+        // 断开全局引用，让新一轮的录音可以畅通无阻地使用新变量
+        readLatch = null
+        audioRecord = null
+        activePcmStream = null
+
         try {
-            if (audioRecord?.state == AudioRecord.STATE_INITIALIZED) {
-                audioRecord?.stop()
+            latchToWait?.await(200, java.util.concurrent.TimeUnit.MILLISECONDS)
+        } catch (e: Exception) {}
+
+        try {
+            if (recordToRelease?.state == AudioRecord.STATE_INITIALIZED) {
+                recordToRelease.stop()
             }
         } catch (e: Exception) {
             e.printStackTrace()
         } finally {
-            audioRecord?.release()
-            audioRecord = null
+            recordToRelease?.release()
         }
 
-        val rawPcm = pcmDataStream.toByteArray()
+        // 安全提取快照中的数据
+        val rawPcm = streamToRead?.toByteArray() ?: ByteArray(0)
         if (rawPcm.size < sampleRate * 2 * 0.3) return null // 防误触
 
         val shortBuffer = ByteBuffer.wrap(rawPcm).order(ByteOrder.LITTLE_ENDIAN).asShortBuffer()
@@ -85,42 +173,36 @@ class AudioProcessor {
         // 🎛️ 录音棚级 DSP (数字信号处理) 核心管线
         // ==========================================
 
-        // 1. 去直流偏移 (DC Offset Removal) & 过滤低频震水声
         var lastX = 0f
         var lastY = 0f
         for (i in pcmShorts.indices) {
             val x = pcmShorts[i].toFloat()
-            val y = x - lastX + 0.995f * lastY // IIR 高通滤波
+            val y = x - lastX + 0.995f * lastY
             lastX = x
             lastY = y
             pcmShorts[i] = y.toInt().toShort()
         }
 
-        // 2. 噪声门 (Noise Gate) - 抹除环境白噪音
-        val noiseThreshold = 150 // 低于此阈值的细碎声音会被削弱
+        val noiseThreshold = 150
         for (i in pcmShorts.indices) {
             if (abs(pcmShorts[i].toInt()) < noiseThreshold) {
-                // 削弱 50% 噪音，保留自然感，不至于变成死寂
                 pcmShorts[i] = (pcmShorts[i] * 0.5f).toInt().toShort()
             }
         }
 
-        // 3. 动态压限 (Dynamic Range Compression / 智能增益 AGC)
         var sumSquare = 0.0
         for (sample in pcmShorts) {
             sumSquare += (sample.toDouble() * sample.toDouble())
         }
         val rms = sqrt(sumSquare / pcmShorts.size)
 
-        val targetRms = 3500.0 // 目标黄金响度
+        val targetRms = 3500.0
         var multiplier = if (rms > 10) targetRms / rms else 1.0
-        multiplier = multiplier.coerceIn(0.5, 12.0) // 最大放大倍数限制，防破音
+        multiplier = multiplier.coerceIn(0.5, 12.0)
 
-        val softLimit = 28000.0 // 软限幅阈值
+        val softLimit = 28000.0
         for (i in pcmShorts.indices) {
             var amplified = pcmShorts[i] * multiplier
-
-            // 软限幅 (Soft Clipping)：大声不炸麦，圆滑过渡
             if (amplified > softLimit) {
                 amplified = softLimit + (amplified - softLimit) * 0.2
             } else if (amplified < -softLimit) {
@@ -129,7 +211,6 @@ class AudioProcessor {
             pcmShorts[i] = amplified.toInt().toShort()
         }
 
-        // 4. 峰值标准化 (Peak Normalization) - Whisper 偏好满血响度
         var peak = 0
         for (sample in pcmShorts) {
             val absVal = abs(sample.toInt())
@@ -144,9 +225,31 @@ class AudioProcessor {
             }
         }
 
-        // 转回字节流并封装标准 WAV 协议头
-        val processedBytes = ByteArray(pcmShorts.size * 2)
-        ByteBuffer.wrap(processedBytes).order(ByteOrder.LITTLE_ENDIAN).asShortBuffer().put(pcmShorts)
+        var startIdx = -1
+        var endIdx = -1
+        val silenceThreshold = 400
+
+        for (i in pcmShorts.indices) {
+            if (abs(pcmShorts[i].toInt()) > silenceThreshold) {
+                startIdx = maxOf(0, i - 8000)
+                break
+            }
+        }
+        for (i in pcmShorts.size - 1 downTo 0) {
+            if (abs(pcmShorts[i].toInt()) > silenceThreshold) {
+                endIdx = minOf(pcmShorts.size - 1, i + 8000)
+                break
+            }
+        }
+
+        if (startIdx == -1 || endIdx == -1 || startIdx >= endIdx) return null
+
+        val validLength = endIdx - startIdx + 1
+        val trimmedShorts = ShortArray(validLength)
+        System.arraycopy(pcmShorts, startIdx, trimmedShorts, 0, validLength)
+
+        val processedBytes = ByteArray(trimmedShorts.size * 2)
+        ByteBuffer.wrap(processedBytes).order(ByteOrder.LITTLE_ENDIAN).asShortBuffer().put(trimmedShorts)
 
         return addWavHeader(processedBytes)
     }
