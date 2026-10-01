@@ -5,8 +5,8 @@
 ![License](https://img.shields.io/badge/License-MIT-blue.svg)
 
 <!-- 硬核技术栈行 -->
-![ASR](https://img.shields.io/badge/ASR-Groq_Whisper_v3-orange.svg)
-![AI Engine](https://img.shields.io/badge/AI_Engine-Gemini_3.1_%26_Qwen-blueviolet.svg)
+![ASR](https://img.shields.io/badge/ASR-Groq_Whisper_Large_v3-orange.svg)
+![AI Engine](https://img.shields.io/badge/AI_Engine-GPT--OSS_120B_%2F_Gemini_3.1_Flash--Lite-blueviolet.svg)
 ![TTS Engine](https://img.shields.io/badge/TTS-Microsoft_Edge_Cluster-0078D4.svg)
 
 # 🎙️ KANE Face-to-Face APP
