@@ -1670,7 +1670,7 @@ class MainActivity : AppCompatActivity() {
 
         // 署名留白区
         val tvFooter = TextView(context).apply {
-            text = "Designed & Developed by KANE\nVer 5.4.0 Pro"
+            text = "Designed & Developed by KANE\nVer 5.4.1 Pro"
             setTextColor(Color.parseColor("#666666"))
             textSize = 12f
             gravity = android.view.Gravity.CENTER
@@ -1716,6 +1716,8 @@ class MainActivity : AppCompatActivity() {
     }
     // 🌟 新增一个全局变量，用来记忆输入框的状态，防止弹窗“叠罗汉”
     private var currentTextInputDialog: androidx.appcompat.app.AlertDialog? = null
+    // 🌟 弹窗内专属的语音打字并发锁
+    private var isDialogRecording = false
     // 👇 新增：用于在全屏大字报期间，把没写完的草稿框暂存起来
     private var pendingDraftDialog: androidx.appcompat.app.AlertDialog? = null
     // 👇 新增：记忆最后一次激活的是上方还是下方输入框
@@ -1968,6 +1970,121 @@ class MainActivity : AppCompatActivity() {
                 layoutTransition = android.animation.LayoutTransition()
             }
 
+            // ==========================================
+            // 🌟 核心：新增的语音打字机按钮
+            // ==========================================
+            val micBtn = TextView(context).apply {
+                text = "🎙️"
+                textSize = 20f
+                gravity = android.view.Gravity.CENTER
+                layoutParams = LinearLayout.LayoutParams(btnSize, btnSize).apply { bottomMargin = (12 * density).toInt() }
+                background = GradientDrawable().apply {
+                    shape = GradientDrawable.OVAL
+                    setColor(Color.parseColor("#252526"))
+                    setStroke((2 * density).toInt(), Color.parseColor(activeColor))
+                }
+            }
+
+            micBtn.setOnTouchListener { v, event ->
+                val bg = micBtn.background as GradientDrawable
+                when (event.action) {
+                    MotionEvent.ACTION_DOWN -> {
+                        if (!checkAudioPermission()) {
+                            requestAudioPermission()
+                            Toast.makeText(context, "⚠️ 请先授予麦克风权限", Toast.LENGTH_SHORT).show()
+                            return@setOnTouchListener true
+                        }
+                        // 如果正在录音，其他按键全部失效
+                        if (isDialogRecording) return@setOnTouchListener true
+
+                        v.parent.requestDisallowInterceptTouchEvent(true)
+
+                        isDialogRecording = true
+                        triggerVibration(50)
+
+                        micBtn.text = "🔴"
+                        bg.setStroke((2 * density).toInt(), Color.parseColor("#FF4444"))
+                        micBtn.animate().scaleX(0.85f).scaleY(0.85f).setDuration(150).start()
+
+                        edgeTts.stop()
+                        val startRecordingTask = { audioProcessor.startRecording() }
+                        if (geminiLiveEngine != null) {
+                            geminiLiveEngine?.suspendHardwareMic { startRecordingTask() }
+                        } else {
+                            startRecordingTask()
+                        }
+                        true
+                    }
+                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                        v.parent.requestDisallowInterceptTouchEvent(false)
+                        if (!isDialogRecording || micBtn.text == "⏳") return@setOnTouchListener true
+
+                        triggerVibration(30)
+                        micBtn.text = "⏳"
+                        bg.setStroke((2 * density).toInt(), Color.parseColor("#FFFF00"))
+                        micBtn.animate().scaleX(1.0f).scaleY(1.0f).setDuration(150).start()
+
+                        Thread {
+                            val wavData = try { audioProcessor.stopAndProcess() } catch (e: Exception) { null }
+                            runOnUiThread {
+                                if (isDestroyed || isFinishing) return@runOnUiThread
+
+                                val restoreUiAndHardware = {
+                                    micBtn.text = "🎙️"
+                                    bg.setStroke((2 * density).toInt(), Color.parseColor(activeColor))
+                                    isDialogRecording = false
+                                    if (isLiveTranslateEnabled) geminiLiveEngine?.restoreHardwareMic()
+                                }
+
+                                if (wavData == null) {
+                                    Toast.makeText(context, "⚠️ 录音太短，未识别到声音", Toast.LENGTH_SHORT).show()
+                                    et.background = GradientDrawable().apply { setColor(Color.parseColor("#0F0F0F")); setStroke(4, Color.parseColor("#FFA500")); cornerRadius = 20f }
+                                    et.postDelayed({ et.background = GradientDrawable().apply { setColor(Color.parseColor("#0F0F0F")); setStroke(if (et.hasFocus()) 5 else 2, Color.parseColor(if (et.hasFocus()) activeColor else "#444444")); cornerRadius = 20f } }, 1500)
+                                    restoreUiAndHardware()
+                                    return@runOnUiThread
+                                }
+
+                                val sourceLangName = if (isTop) ptLangName else myLangName
+                                val asrLangCode = AppConstants.LANG_CODES[sourceLangName] ?: "en"
+
+                                aiEngine.transcribeAudio(wavData, asrLangCode) { asrSuccess, rawText ->
+                                    if (isDestroyed || isFinishing || currentTextInputDialog?.isShowing != true) {
+                                        restoreUiAndHardware()
+                                        return@transcribeAudio
+                                    }
+
+                                    if (asrSuccess) {
+                                        val text = rawText.replace(Regex("<\\|.*?\\|>"), "").trim()
+
+                                        // 🌟 新增：专属“提示词幻觉”拦截器 (防 AI 精神错乱复读)
+                                        val isPromptHallucination = text.contains("准确识别") && text.contains("标点符号") ||
+                                                text.contains("This is an English") ||
+                                                text.contains("Ensure correct capitalization")
+
+                                        if (text.isNotBlank() && !isHallucination(text) && !isPromptHallucination) {
+                                            val cursorPosition = if (et.selectionStart >= 0) et.selectionStart else et.text.length
+                                            et.text.insert(cursorPosition, text)
+                                            et.setSelection(et.selectionStart)
+                                            triggerVibration(50)
+                                        } else {
+                                            Toast.makeText(context, "🎯 已过滤无效杂音", Toast.LENGTH_SHORT).show()
+                                            et.background = GradientDrawable().apply { setColor(Color.parseColor("#0F0F0F")); setStroke(4, Color.parseColor("#FF4444")); cornerRadius = 20f }
+                                            et.postDelayed({ et.background = GradientDrawable().apply { setColor(Color.parseColor("#0F0F0F")); setStroke(if (et.hasFocus()) 5 else 2, Color.parseColor(if (et.hasFocus()) activeColor else "#444444")); cornerRadius = 20f } }, 1500)
+                                        }
+                                    } else {
+                                        Toast.makeText(context, "❌ 识别失败，请检查网络", Toast.LENGTH_SHORT).show()
+                                    }
+                                    restoreUiAndHardware()
+                                }
+                            }
+                        }.start()
+                        true
+                    }
+                    else -> false
+                }
+            }
+            // ==========================================
+
             val speakerBtn = TextView(context).apply {
                 text = "🔊"
                 textSize = 20f
@@ -1992,6 +2109,8 @@ class MainActivity : AppCompatActivity() {
                     setStroke((2 * density).toInt(), Color.parseColor(activeColor))
                 }
             }
+
+            bottomBtnGroup.addView(micBtn)
             bottomBtnGroup.addView(speakerBtn)
             bottomBtnGroup.addView(sendBtn)
 
@@ -2049,7 +2168,7 @@ class MainActivity : AppCompatActivity() {
                     val targetLangName = if (isTop) ptLangName else myLangName
                     val voiceId = getSmartVoiceId(voiceName, targetLangName)
 
-                    val forceHeadset = isTop && isHeadsetPluggedIn() // 🌟 强制私密播报
+                    val forceHeadset = isTop && isHeadsetPluggedIn()
                     edgeTts.speak(input, voiceId, forceHeadset,
                         onNodeSelected = { _ -> runOnUiThread { speakerBtn.text = "⏳"; (speakerBtn.background as GradientDrawable).setColor(Color.parseColor("#121212")) } },
                         onStart = { runOnUiThread { speakerBtn.text = "⏹️"; (speakerBtn.background as GradientDrawable).setColor(Color.parseColor("#331111")); (speakerBtn.background as GradientDrawable).setStroke((2 * density).toInt(), Color.parseColor("#FF4444")) } },
@@ -2274,7 +2393,15 @@ class MainActivity : AppCompatActivity() {
 
         currentTextInputDialog?.window?.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(Color.TRANSPARENT))
         currentTextInputDialog?.window?.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
-        currentTextInputDialog?.setOnDismissListener { edgeTts.stop() }
+
+        // 🌟 航天级善后机制：弹窗销毁时，清理所有残留锁定状态
+        currentTextInputDialog?.setOnDismissListener {
+            edgeTts.stop()
+            isDialogRecording = false // 重置并发锁
+            if (isLiveTranslateEnabled && geminiLiveEngine != null && !isCurrentlyRecordingClassic) {
+                geminiLiveEngine?.restoreHardwareMic()
+            }
+        }
 
         if (!isFinishing && !isDestroyed) currentTextInputDialog?.show()
     }
@@ -3709,7 +3836,8 @@ class MainActivity : AppCompatActivity() {
         layout.addView(tvSource)
 
         val btnUpdate = TextView(context).apply {
-            text = "🚀 立即用暗号解锁升级"
+            text = "🚀 立即升级"
+
             setTextColor(Color.parseColor("#1A1A1B"))
             textSize = 16f
             setTypeface(null, android.graphics.Typeface.BOLD)
