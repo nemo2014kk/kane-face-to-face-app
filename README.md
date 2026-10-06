@@ -5,8 +5,8 @@
 ![License](https://img.shields.io/badge/License-MIT-blue.svg)
 
 <!-- 硬核技术栈行 -->
-![ASR](https://img.shields.io/badge/ASR-Groq_Whisper_v3-orange.svg)
-![AI Engine](https://img.shields.io/badge/AI_Engine-Gemini_3.1_%26_Qwen-blueviolet.svg)
+![ASR](https://img.shields.io/badge/ASR-Groq_Whisper_Large_v3-orange.svg)
+![AI Engine](https://img.shields.io/badge/AI_Engine-GPT--OSS_120B_%2F_Gemini_3.1_Flash--Lite-blueviolet.svg)
 ![TTS Engine](https://img.shields.io/badge/TTS-Microsoft_Edge_Cluster-0078D4.svg)
 
 # 🎙️ KANE Face-to-Face APP
@@ -15,14 +15,16 @@
 ---
 
 ### ✨ 核心亮点：
-- **🎙️ 双向极速对讲**：长按即说，松开即译，专为面对面无障碍沟通设计。
+- **🎙️ 双向极速对讲**：按住即说，松开即译（直接发音），专为面对面无障碍沟通设计，超强的语音识别灵敏度。
 - **👁️ 视觉拍照破译**：利用内置相机拍照并圈选文字，AI 自动进行 OCR 提取并高保真翻译，还支持直接朗读。
 - **🗣️ 同声翻译**：按住“同传”按钮即可启动，它能一边听对方说话，一边在后台实时翻译并同步播放声音。不需要像以前那样“说完一整句话，然后等它翻译、播放”，而是能做到真正的“一边说一边翻译”。 
              ⚠️ 注意： 使用【同传】功能时，请务必佩戴耳机！ 目前同传功能主要是针对于把“对方语言”实时翻译成“我方语言”，实时翻译的结果音频流总是从耳机播放。 
 - **📱 全屏大字报**：双击翻译气泡即可唤出高对比度大字展示，支持双指缩放，方便展示给对方看。
 - **🛡️ 幻听防火墙**：内置底噪过滤算法，自动屏蔽 AI 偶尔产生的“幻觉字幕”，100% 净化对话流。
-- 
-注意，初次安装需要打开设置版面，有3处需要填写，软件才能正常工作。你需要自己申请API（免费的），暗号需要找KANE获取。
+
+注意，初次安装需要打开设置版面，有3处需要填写，软件才能正常工作。你需要自己申请API KEY（免费的，2家，分别是Groq与Google，使用Google账号即可）,点击官网链接，进入官网之后，创建API KEY 然后复制粘贴回软件的API key输入框，保存。暗号是防止滥用TTS服务的，安全列表里已备注，填入即可（实在要找不到暗号可以在软件里发EMAIL联系KANE获取）。
+软件设置面板最下方有详细的使用说明。
+
 
 <img width="1261" height="865" alt="屏幕截图 2026-06-06 222554" src="https://github.com/user-attachments/assets/cb97d9c4-eb4f-40f4-9d39-88f13c03eb67" />
 
@@ -65,3 +67,4 @@
 #### 🕌 中东与非洲地区 (2 种)
 - 阿拉伯语 (Arabic)
 - 斯瓦希里语 (Swahili)
+
